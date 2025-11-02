@@ -1,6 +1,6 @@
 ﻿{
   "name": "marketing-director-worker",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "commonjs",
   "main": "index.js",
@@ -8,6 +8,7 @@
     "start": "node index.js"
   },
   "dependencies": {
+    "node-cron": "^3.0.3",
     "pg": "^8.11.3"
   }
 }

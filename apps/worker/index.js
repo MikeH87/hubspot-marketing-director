@@ -1,4 +1,10 @@
-﻿const { Pool } = require("pg");
+﻿const cron = require("node-cron");
+const { Pool } = require("pg");
+
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.DATABASE_SSL === "false" ? false : { rejectUnauthorized: false }
+});
 
 function getMostRecentMonday(d) {
   const date = new Date(d);
@@ -9,36 +15,54 @@ function getMostRecentMonday(d) {
   return date.toISOString().split("T")[0];
 }
 
-(async function run() {
-  console.log("Worker run started…");
+async function ensureReportsTable() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS reports (
+      week_start DATE PRIMARY KEY,
+      summary TEXT
+    );
+  `);
+}
 
-  const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: process.env.DATABASE_SSL === "false" ? false : { rejectUnauthorized: false }
+async function createPlaceholderReport() {
+  const weekStart = getMostRecentMonday(new Date());
+  const summary = \`Placeholder report for week starting \${weekStart}\`;
+
+  await ensureReportsTable();
+  await pool.query(
+    "INSERT INTO reports (week_start, summary) VALUES ($1, $2) ON CONFLICT (week_start) DO UPDATE SET summary = EXCLUDED.summary;",
+    [weekStart, summary]
+  );
+
+  console.log("Inserted placeholder weekly report for", weekStart);
+}
+
+async function main() {
+  console.log("Worker booted. Scheduler initialising…");
+
+  // Run immediately if RUN_ONCE=true (useful for manual tests)
+  if ((process.env.RUN_ONCE || "").toLowerCase() === "true") {
+    await createPlaceholderReport();
+    console.log("RUN_ONCE complete. Exiting.");
+    process.exit(0);
+  }
+
+  // Schedule: Sundays 21:00 Europe/London
+  // Cron in UTC: during UK winter, 21:00 UK = 21:00 UTC; during summer, shift if needed.
+  cron.schedule("0 21 * * 0", async () => {
+    try {
+      console.log("[CRON] Weekly job started…");
+      await createPlaceholderReport();
+      console.log("[CRON] Weekly job finished.");
+    } catch (err) {
+      console.error("[CRON] Error:", err);
+    }
   });
 
-  try {
-    const weekStart = getMostRecentMonday(new Date());
-    const summary = `Placeholder report for week starting ${weekStart}`;
+  console.log("Scheduler running. Waiting for next trigger…");
+}
 
-    // Create table if it doesn't exist
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS reports (
-        week_start DATE PRIMARY KEY,
-        summary TEXT
-      );
-    `);
-
-    await pool.query(
-      "INSERT INTO reports (week_start, summary) VALUES ($1, $2) ON CONFLICT (week_start) DO UPDATE SET summary = EXCLUDED.summary;",
-      [weekStart, summary]
-    );
-
-    console.log("Inserted placeholder weekly report.");
-  } catch (err) {
-    console.error("Worker error:", err.message);
-  } finally {
-    await pool.end();
-    console.log("Worker finished.");
-  }
-})();
+main().catch(err => {
+  console.error("Worker fatal error:", err);
+  process.exit(1);
+});
