@@ -26,7 +26,7 @@ async function ensureReportsTable() {
 
 async function createPlaceholderReport() {
   const weekStart = getMostRecentMonday(new Date());
-  const summary = \`Placeholder report for week starting \${weekStart}\`;
+  const summary = `Placeholder report for week starting ${weekStart}`;
 
   await ensureReportsTable();
   await pool.query(
@@ -47,8 +47,7 @@ async function main() {
     process.exit(0);
   }
 
-  // Schedule: Sundays 21:00 Europe/London
-  // Cron in UTC: during UK winter, 21:00 UK = 21:00 UTC; during summer, shift if needed.
+  // Schedule: Sundays 21:00 UK (cron uses server time/UTC)
   cron.schedule("0 21 * * 0", async () => {
     try {
       console.log("[CRON] Weekly job started…");
