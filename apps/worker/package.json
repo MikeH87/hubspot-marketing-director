@@ -9,6 +9,6 @@
   },
   "dependencies": {
     "node-cron": "^3.0.3",
-    "pg": "^8.11.3"
+    "pg": "^8.11.3", "nodemailer": "^6.9.14"
   }
 }

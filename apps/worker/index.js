@@ -1,5 +1,5 @@
 ﻿const cron = require("node-cron");
-const { Pool } = require("pg");
+const { Pool } = require("pg"); const { sendReportEmail } = require("../../packages/email/mailer");
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -34,7 +34,7 @@ async function createPlaceholderReport() {
     [weekStart, summary]
   );
 
-  console.log("Inserted placeholder weekly report for", weekStart);
+  console.log("Inserted placeholder weekly report for", weekStart);\n  // Send email if configured\n  const to = process.env.EMAIL_TO || process.env.SMTP_USER;\n  if (to) {\n    await sendReportEmail({ to, subject: `Weekly marketing report (${weekStart})`, text: summary });\n  }
 }
 
 async function main() {
