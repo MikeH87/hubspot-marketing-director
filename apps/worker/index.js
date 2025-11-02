@@ -1,7 +1,7 @@
 ﻿const cron = require("node-cron");
 const { Pool } = require("pg");
 const { sendReportEmail } = require("./lib/mailer");
-const { getCampaigns } = require("../../packages/hubspot/client");
+const { getAllCampaigns } = require("../../packages/hubspot/client");
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -18,15 +18,12 @@ function getMostRecentMonday(d) {
 }
 
 async function ensureCoreTables() {
-  // reports
   await pool.query(`
     CREATE TABLE IF NOT EXISTS reports (
       week_start DATE PRIMARY KEY,
       summary TEXT
     );
   `);
-
-  // campaigns
   await pool.query(`
     CREATE TABLE IF NOT EXISTS campaigns (
       id TEXT PRIMARY KEY,
@@ -39,9 +36,16 @@ async function ensureCoreTables() {
   `);
 }
 
+function maybeFilterTests(arr) {
+  const flag = (process.env.EXCLUDE_TEST_CAMPAIGNS || "").toLowerCase() === "true";
+  if (!flag) return arr;
+  const re = /(test|sandbox|dummy)/i;
+  return arr.filter(c => !re.test(String(c.name || "")));
+}
+
 async function upsertCampaigns(rows) {
   if (!Array.isArray(rows) || !rows.length) return 0;
-  const text = `
+  const sql = `
     INSERT INTO campaigns (id, name, type, app_id, created_at, updated_at)
     VALUES ($1, $2, $3, $4, $5, $6)
     ON CONFLICT (id) DO UPDATE
@@ -51,7 +55,7 @@ async function upsertCampaigns(rows) {
         created_at = EXCLUDED.created_at,
         updated_at = EXCLUDED.updated_at
   `;
-  let count = 0;
+  let n = 0;
   for (const c of rows) {
     const params = [
       String(c.id || ""),
@@ -61,10 +65,10 @@ async function upsertCampaigns(rows) {
       c.createdAt ? new Date(c.createdAt) : null,
       c.updatedAt ? new Date(c.updatedAt) : null
     ];
-    await pool.query(text, params);
-    count++;
+    await pool.query(sql, params);
+    n++;
   }
-  return count;
+  return n;
 }
 
 async function createPlaceholderReport() {
@@ -77,30 +81,25 @@ async function createPlaceholderReport() {
   console.log("Inserted placeholder weekly report for", weekStart);
 
   const to = process.env.EMAIL_TO || process.env.SMTP_USER;
-  if (to) {
-    await sendReportEmail({ to, subject: `Weekly marketing report (${weekStart})`, text: summary });
-  }
+  if (to) await sendReportEmail({ to, subject: `Weekly marketing report (${weekStart})`, text: summary });
 }
 
 async function main() {
   console.log("Worker booted. Scheduler initialising…");
-
   const RUN_ONCE = (process.env.RUN_ONCE || "").toLowerCase() === "true";
   const DISABLE_SCHEDULER = (process.env.DISABLE_SCHEDULER || "").toLowerCase() === "true";
 
-  // Ensure tables exist
   await ensureCoreTables();
 
   if (RUN_ONCE) {
-    // 1) Save the placeholder report like before
     await createPlaceholderReport();
 
-    // 2) Fetch campaigns from HubSpot and upsert into DB
     try {
-      const campaigns = await getCampaigns(50);
+      let campaigns = await getAllCampaigns(500);
+      campaigns = maybeFilterTests(campaigns);
       const saved = await upsertCampaigns(campaigns);
-      console.log(`Campaigns upserted: ${saved}`);
-      if (saved) {
+      console.log(`Campaigns upserted (all pages): ${saved}`);
+      if (campaigns.length) {
         const sample = campaigns.slice(0, 3).map(c => c.name || c.id);
         console.log("Sample campaigns:", sample.join(" | "));
       }
@@ -116,7 +115,6 @@ async function main() {
       try {
         console.log("[CRON] Weekly job started…");
         await createPlaceholderReport();
-        // (Next steps: pull metrics & store snapshots here)
         console.log("[CRON] Weekly job finished.");
       } catch (err) {
         console.error("[CRON] Error:", err);
@@ -127,7 +125,6 @@ async function main() {
     console.log("Scheduler disabled (DISABLE_SCHEDULER=true or RUN_ONCE=true). Idling.");
   }
 
-  // Keep process alive
   setInterval(() => {}, 1e9);
 }
 
