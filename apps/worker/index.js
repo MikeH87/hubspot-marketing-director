@@ -38,7 +38,6 @@ async function createPlaceholderReport() {
 
   console.log("Inserted placeholder weekly report for", weekStart);
 
-  // Send email if SMTP is configured
   const to = process.env.EMAIL_TO || process.env.SMTP_USER;
   if (to) {
     await sendReportEmail({
@@ -55,21 +54,33 @@ async function main() {
   const RUN_ONCE = (process.env.RUN_ONCE || "").toLowerCase() === "true";
   const DISABLE_SCHEDULER = (process.env.DISABLE_SCHEDULER || "").toLowerCase() === "true";
 
-  // Run once, then KEEP PROCESS ALIVE (no exit) to avoid Render restarts
   if (RUN_ONCE) {
     await createPlaceholderReport();
+
+    // 💡 Three smoke tests: CRM Deals, Marketing Emails, Ads Accounts
     try {
       const deals = await testDealsSample(3);
-      console.log("HubSpot test: deals fetched =", deals.count, "IDs:", (deals.sampleIds || []).join(", "));
+      console.log("HubSpot CRM test (deals):", deals.count, "IDs:", (deals.sampleIds || []).join(", "));
     } catch (e) {
-      console.warn("HubSpot test failed:", e.message);
+      console.warn("Deals test failed:", e.message);
     }
+    try {
+      const emails = await testMarketingEmails(3);
+      console.log("HubSpot Marketing Emails test:", emails.count);
+    } catch (e) {
+      console.warn("Marketing Emails test failed:", e.message);
+    }
+    try {
+      const ads = await testAdsAccounts(5);
+      console.log("HubSpot Ads Accounts test:", ads.count);
+    } catch (e) {
+      console.warn("Ads Accounts test failed:", e.message);
+    }
+
     console.log("RUN_ONCE complete. Idling (no exit).");
   }
 
-  // Only schedule weekly cron if not explicitly disabled AND not in RUN_ONCE test
   if (!DISABLE_SCHEDULER && !RUN_ONCE) {
-    // Sundays 21:00 UK (cron uses server/UTC time)
     cron.schedule("0 21 * * 0", async () => {
       try {
         console.log("[CRON] Weekly job started…");
@@ -84,7 +95,6 @@ async function main() {
     console.log("Scheduler disabled (DISABLE_SCHEDULER=true or RUN_ONCE=true). Idling.");
   }
 
-  // Keep process alive
   setInterval(() => {}, 1e9);
 }
 
