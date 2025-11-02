@@ -1,6 +1,6 @@
 ﻿const cron = require("node-cron");
 const { Pool } = require("pg");
-const { sendReportEmail } = require("../../packages/email/mailer");
+const { sendReportEmail } = require("./lib/mailer");
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -37,7 +37,6 @@ async function createPlaceholderReport() {
 
   console.log("Inserted placeholder weekly report for", weekStart);
 
-  // Send email if SMTP is configured
   const to = process.env.EMAIL_TO || process.env.SMTP_USER;
   if (to) {
     await sendReportEmail({
@@ -51,14 +50,13 @@ async function createPlaceholderReport() {
 async function main() {
   console.log("Worker booted. Scheduler initialising…");
 
-  // Run immediately if RUN_ONCE=true (manual test)
   if ((process.env.RUN_ONCE || "").toLowerCase() === "true") {
     await createPlaceholderReport();
     console.log("RUN_ONCE complete. Exiting.");
     process.exit(0);
   }
 
-  // Weekly schedule: Sundays 21:00 UK (cron uses server/UTC time)
+  // Sundays 21:00 UK (cron uses server/UTC time)
   cron.schedule("0 21 * * 0", async () => {
     try {
       console.log("[CRON] Weekly job started…");
