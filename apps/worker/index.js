@@ -1,7 +1,7 @@
 ﻿const cron = require("node-cron");
 const { Pool } = require("pg");
 const { sendReportEmail } = require("./lib/mailer");
-const { testDealsSample, testMarketingEmails, testAdsAccounts } = require("../../packages/hubspot/client");
+const { testDealsSample, hsGetRaw } = require("../../packages/hubspot/client");
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
