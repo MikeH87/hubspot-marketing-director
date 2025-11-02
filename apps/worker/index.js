@@ -1,5 +1,6 @@
 ﻿const cron = require("node-cron");
-const { Pool } = require("pg"); const { sendReportEmail } = require("../../packages/email/mailer");
+const { Pool } = require("pg");
+const { sendReportEmail } = require("../../packages/email/mailer");
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -34,20 +35,30 @@ async function createPlaceholderReport() {
     [weekStart, summary]
   );
 
-  console.log("Inserted placeholder weekly report for", weekStart);\n  // Send email if configured\n  const to = process.env.EMAIL_TO || process.env.SMTP_USER;\n  if (to) {\n    await sendReportEmail({ to, subject: `Weekly marketing report (${weekStart})`, text: summary });\n  }
+  console.log("Inserted placeholder weekly report for", weekStart);
+
+  // Send email if SMTP is configured
+  const to = process.env.EMAIL_TO || process.env.SMTP_USER;
+  if (to) {
+    await sendReportEmail({
+      to,
+      subject: `Weekly marketing report (${weekStart})`,
+      text: summary
+    });
+  }
 }
 
 async function main() {
   console.log("Worker booted. Scheduler initialising…");
 
-  // Run immediately if RUN_ONCE=true (useful for manual tests)
+  // Run immediately if RUN_ONCE=true (manual test)
   if ((process.env.RUN_ONCE || "").toLowerCase() === "true") {
     await createPlaceholderReport();
     console.log("RUN_ONCE complete. Exiting.");
     process.exit(0);
   }
 
-  // Schedule: Sundays 21:00 UK (cron uses server time/UTC)
+  // Weekly schedule: Sundays 21:00 UK (cron uses server/UTC time)
   cron.schedule("0 21 * * 0", async () => {
     try {
       console.log("[CRON] Weekly job started…");
