@@ -15,11 +15,10 @@ async function hsGet(path, qs = {}) {
   return res.json();
 }
 
+// already used elsewhere
 async function getAllCampaigns(max = 500) {
-  // fetch all pages
   async function page(limit = 100, after) {
-    const url = "/marketing/v3/campaigns";
-    const json = await hsGet(url, { limit, after });
+    const json = await hsGet("/marketing/v3/campaigns", { limit, after });
     const results = Array.isArray(json.results) ? json.results : [];
     const next = json?.paging?.next?.after || null;
     return { results, next };
@@ -35,15 +34,18 @@ async function getAllCampaigns(max = 500) {
   return out;
 }
 
-// Build a path from a template, e.g. "/marketing/v3/accounts/{ACCOUNT_ID}/campaigns/{CAMPAIGN_ID}/analytics"
-async function hsGetFromTemplate(pathTemplate, vars) {
-  if (!pathTemplate) throw new Error("No analytics path template provided");
-  let path = pathTemplate;
-  for (const [k, v] of Object.entries(vars || {})) {
-    path = path.replaceAll(`{${k}}`, String(v));
+// NEW: fetch the CRM object for a campaign (properties vary per portal)
+async function getCampaignObject(campaignId) {
+  // If CRM object exists for campaigns in your portal:
+  // /crm/v3/objects/campaigns/{campaignId}
+  // If that 404s, we fall back to the marketing/v3 listing detail:
+  try {
+    return await hsGet(`/crm/v3/objects/campaigns/${campaignId}`);
+  } catch (e) {
+    // fallback to marketing v3 item (it returns basic fields)
+    const list = await hsGet(`/marketing/v3/campaigns`, { limit: 1, id: campaignId });
+    return list;
   }
-  if (!path.startsWith("/")) path = "/" + path;
-  return hsGet(path, {});
 }
 
-module.exports = { hsGet, getAllCampaigns, hsGetFromTemplate };
+module.exports = { hsGet, getAllCampaigns, getCampaignObject };

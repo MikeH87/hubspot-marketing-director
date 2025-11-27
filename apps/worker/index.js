@@ -1,7 +1,7 @@
 ﻿const cron = require("node-cron");
 const { Pool } = require("pg");
 const { sendReportEmail } = require("./lib/mailer");
-const { getAllCampaigns, hsGetFromTemplate } = require("../../packages/hubspot/client");
+const { getAllCampaigns, getCampaignObject } = require("../../packages/hubspot/client");
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -73,27 +73,19 @@ async function upsertCampaigns(rows) {
   return n;
 }
 
-async function snapshotCampaignAnalytics() {
-  const template = process.env.HS_CAMPAIGN_ANALYTICS_PATH_TEMPLATE; // e.g. "/marketing/v3/accounts/{ACCOUNT_ID}/campaigns/{CAMPAIGN_ID}/analytics"
-  const accountId = process.env.HS_ACCOUNT_ID || null;
-  if (!template) {
-    console.log("No HS_CAMPAIGN_ANALYTICS_PATH_TEMPLATE provided — skipping analytics snapshot.");
-    return 0;
-  }
-
-  // get campaigns from DB (already upserted)
-  const { rows } = await pool.query(`SELECT id FROM campaigns ORDER BY id LIMIT 1000;`);
+async function snapshotCampaignObjects() {
+  const { rows } = await pool.query(`SELECT id FROM campaigns ORDER BY id`);
   let saved = 0;
   for (const row of rows) {
     try {
-      const data = await hsGetFromTemplate(template, { ACCOUNT_ID: accountId || "", CAMPAIGN_ID: row.id });
+      const data = await getCampaignObject(row.id);
       await pool.query(
         `INSERT INTO campaign_snapshots (campaign_id, account_id, raw_json) VALUES ($1, $2, $3);`,
-        [row.id, accountId, JSON.stringify(data)]
+        [row.id, null, JSON.stringify(data)]
       );
       saved++;
     } catch (e) {
-      console.warn("Snapshot failed for campaign", row.id, "-", e.message);
+      console.warn("Object snapshot failed for campaign", row.id, "-", e.message);
     }
   }
   return saved;
@@ -120,18 +112,14 @@ async function main() {
   await ensureCoreTables();
 
   if (RUN_ONCE) {
-    // 1) Ensure we have current campaigns
     const all = await getAllCampaigns(500);
     await upsertCampaigns(all);
-    console.log(`Campaigns upserted (all pages): ${all.length}`);
+    console.log(\`Campaigns upserted (all pages): \${all.length}\`);
 
-    // 2) Take analytics snapshots using your template
-    const snaps = await snapshotCampaignAnalytics();
-    console.log(`Analytics snapshots saved: ${snaps}`);
+    const snaps = await snapshotCampaignObjects();
+    console.log(\`Campaign object snapshots saved: \${snaps}\`);
 
-    // 3) Keep placeholder report for now
     await createPlaceholderReport();
-
     console.log("RUN_ONCE complete. Idling (no exit).");
   }
 
@@ -141,8 +129,8 @@ async function main() {
         console.log("[CRON] Weekly job started…");
         const all = await getAllCampaigns(500);
         await upsertCampaigns(all);
-        const snaps = await snapshotCampaignAnalytics();
-        console.log(`Analytics snapshots saved: ${snaps}`);
+        const snaps = await snapshotCampaignObjects();
+        console.log(\`Campaign object snapshots saved: \${snaps}\`);
         await createPlaceholderReport();
         console.log("[CRON] Weekly job finished.");
       } catch (err) {
