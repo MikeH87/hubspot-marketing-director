@@ -1,0 +1,103 @@
+[
+  {
+    "name": "marketing_v3_campaigns_id",
+    "url": "https://api.hubapi.com/marketing/v3/campaigns/308ab3e1-d477-4c48-bd4f-986d6c65b488",
+    "status": 200,
+    "ok": true,
+    "top_level_keys": [
+      "id",
+      "properties",
+      "createdAt",
+      "updatedAt",
+      "businessUnits",
+      "assets"
+    ],
+    "properties_key_count": 0,
+    "properties_key_sample": [],
+    "body_preview": "{\"id\":\"308ab3e1-d477-4c48-bd4f-986d6c65b488\",\"properties\":{},\"createdAt\":\"2025-11-12T11:22:13.534Z\",\"updatedAt\":\"2025-11-12T11:29:57.297Z\",\"businessUnits\":[{\"id\":0}],\"assets\":{\"AUTOMATION_PLATFORM_FLOW\":{\"results\":[{\"id\":\"1655480584\",\"name\":\"Nurture: All Products\"}]},\"MARKETING_EMAIL\":{\"results\":[{\""
+  },
+  {
+    "name": "marketing_v3_campaigns_list_by_id",
+    "url": "https://api.hubapi.com/marketing/v3/campaigns?limit=1&id=308ab3e1-d477-4c48-bd4f-986d6c65b488",
+    "status": 200,
+    "ok": true,
+    "top_level_keys": [
+      "total",
+      "results",
+      "paging"
+    ],
+    "properties_key_count": 0,
+    "properties_key_sample": [],
+    "body_preview": "{\"total\":77,\"results\":[{\"id\":\"308ab3e1-d477-4c48-bd4f-986d6c65b488\",\"properties\":{},\"createdAt\":\"2025-11-12T11:22:13.534Z\",\"updatedAt\":\"2025-11-12T11:29:57.297Z\",\"businessUnits\":[{\"id\":0}]}],\"paging\":{\"next\":{\"after\":\"MQ%3D%3D\",\"link\":\"https://api.hubapi.com/marketing/v3/campaigns?limit=1&id=308ab3e"
+  },
+  {
+    "name": "crm_v3_objects_marketing_campaigns",
+    "url": "https://api.hubapi.com/crm/v3/objects/marketing_campaigns/308ab3e1-d477-4c48-bd4f-986d6c65b488",
+    "status": 400,
+    "ok": false,
+    "top_level_keys": [
+      "status",
+      "message",
+      "correlationId"
+    ],
+    "properties_key_count": 0,
+    "properties_key_sample": [],
+    "body_preview": "{\"status\":\"error\",\"message\":\"Unable to infer object type from: marketing_campaigns\",\"correlationId\":\"67463674-ea32-4a94-af9f-ff4580fcbca8\"}"
+  },
+  {
+    "name": "crm_v3_objects_marketingcampaigns",
+    "url": "https://api.hubapi.com/crm/v3/objects/marketingcampaigns/308ab3e1-d477-4c48-bd4f-986d6c65b488",
+    "status": 400,
+    "ok": false,
+    "top_level_keys": [
+      "status",
+      "message",
+      "correlationId"
+    ],
+    "properties_key_count": 0,
+    "properties_key_sample": [],
+    "body_preview": "{\"status\":\"error\",\"message\":\"Unable to infer object type from: marketingcampaigns\",\"correlationId\":\"4b6196ae-5ac4-4f1f-9456-30d905d1f1aa\"}"
+  },
+  {
+    "name": "crm_v3_objects_campaign",
+    "url": "https://api.hubapi.com/crm/v3/objects/campaign/308ab3e1-d477-4c48-bd4f-986d6c65b488",
+    "status": 404,
+    "ok": false,
+    "top_level_keys": [
+      "status",
+      "message",
+      "correlationId",
+      "context",
+      "category"
+    ],
+    "properties_key_count": 0,
+    "properties_key_sample": [],
+    "body_preview": "{\"status\":\"error\",\"message\":\"Object not found. objectId are usually numeric.\",\"correlationId\":\"9ae227aa-9df1-4b52-a64f-447f6820ec24\",\"context\":{\"id\":[\"308ab3e1-d477-4c48-bd4f-986d6c65b488\"]},\"category\":\"OBJECT_NOT_FOUND\"}"
+  },
+  {
+    "name": "crm_v3_properties_campaigns",
+    "url": "https://api.hubapi.com/crm/v3/properties/campaigns",
+    "status": 200,
+    "ok": true,
+    "top_level_keys": [
+      "results"
+    ],
+    "properties_key_count": 0,
+    "properties_key_sample": [],
+    "body_preview": "{\"results\":[{\"updatedAt\":\"2025-10-28T19:24:25.463Z\",\"createdAt\":\"2025-10-28T19:24:25.463Z\",\"name\":\"avg_cpc_last\",\"label\":\"Last AVG CPC\",\"type\":\"number\",\"fieldType\":\"number\",\"description\":\"\",\"groupName\":\"bing_campaign_data\",\"options\":[],\"createdUserId\":\"78213820\",\"updatedUserId\":\"78213820\",\"displayOr"
+  },
+  {
+    "name": "crm_v3_properties_marketing_campaigns",
+    "url": "https://api.hubapi.com/crm/v3/properties/marketing_campaigns",
+    "status": 400,
+    "ok": false,
+    "top_level_keys": [
+      "status",
+      "message",
+      "correlationId"
+    ],
+    "properties_key_count": 0,
+    "properties_key_sample": [],
+    "body_preview": "{\"status\":\"error\",\"message\":\"Unable to infer object type from: marketing_campaigns\",\"correlationId\":\"225481b0-6517-4953-8a56-155f4fa86d5f\"}"
+  }
+]

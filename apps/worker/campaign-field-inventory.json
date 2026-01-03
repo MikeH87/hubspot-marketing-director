@@ -1,0 +1,72 @@
+{
+  "sampled": 15,
+  "campaign_ids": [
+    "308ab3e1-d477-4c48-bd4f-986d6c65b488",
+    "37a24348-28ef-480d-9f15-f38531ad7e61",
+    "db6e32d5-a26a-4751-a135-8d7f0fe73a33",
+    "4bde6183-5d1e-49a1-ab3a-90cf24fdcf40",
+    "1b13a012-b70f-43d4-877d-ca689bf4f0a8",
+    "9a7123da-bf91-485e-a406-24883cade946",
+    "bb41b109-fc3d-45f7-82f0-01256eb035ed",
+    "d9f21a4f-5308-49f5-8179-522b152c4589",
+    "1df3ec67-4d11-41f9-a78b-7464900e2a42",
+    "811fde5f-5999-4045-a6e9-fb307cfce85f",
+    "0017d1b1-bfa2-4919-8183-54586b6259e4",
+    "3e7b81b4-7441-4196-b0d0-b5cb25b5c938",
+    "d107207e-8879-45f1-a656-bda2b9a6ee5b",
+    "14a9cac6-023b-46c8-b9cf-881cd651a3b5",
+    "77f314cc-a47f-440e-a745-df75d19d6473"
+  ],
+  "top_level_keys": {
+    "total": 15,
+    "results": 15,
+    "paging": 15
+  },
+  "properties_keys": {},
+  "examples": [
+    {
+      "total": 77,
+      "results": [
+        {
+          "id": "308ab3e1-d477-4c48-bd4f-986d6c65b488",
+          "properties": {},
+          "createdAt": "2025-11-12T11:22:13.534Z",
+          "updatedAt": "2025-11-12T11:29:57.297Z",
+          "businessUnits": [
+            {
+              "id": 0
+            }
+          ]
+        }
+      ],
+      "paging": {
+        "next": {
+          "after": "MQ%3D%3D",
+          "link": "https://api.hubapi.com/marketing/v3/campaigns?limit=1&id=308ab3e1-d477-4c48-bd4f-986d6c65b488&after=MQ%3D%3D"
+        }
+      }
+    },
+    {
+      "total": 77,
+      "results": [
+        {
+          "id": "308ab3e1-d477-4c48-bd4f-986d6c65b488",
+          "properties": {},
+          "createdAt": "2025-11-12T11:22:13.534Z",
+          "updatedAt": "2025-11-12T11:29:57.297Z",
+          "businessUnits": [
+            {
+              "id": 0
+            }
+          ]
+        }
+      ],
+      "paging": {
+        "next": {
+          "after": "MQ%3D%3D",
+          "link": "https://api.hubapi.com/marketing/v3/campaigns?limit=1&id=37a24348-28ef-480d-9f15-f38531ad7e61&after=MQ%3D%3D"
+        }
+      }
+    }
+  ]
+}

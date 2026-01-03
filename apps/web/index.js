@@ -1,4 +1,5 @@
-﻿const express = require("express");
+﻿require("dotenv").config();
+const express = require("express");
 const { Pool } = require("pg");
 
 const app = express();
@@ -76,3 +77,4 @@ app.get("/snapshots/sample", async (req, res) => {
 });
 
 app.listen(PORT, () => console.log(`Web running on :${PORT}`));
+

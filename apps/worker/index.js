@@ -1,6 +1,9 @@
-﻿const cron = require("node-cron");
+﻿require("dotenv").config();
+
+const cron = require("node-cron");
 const { Pool } = require("pg");
 const { sendReportEmail } = require("./lib/mailer");
+const { generateGptReport } = require("./lib/gptReport");
 const { getAllCampaigns, getCampaignObject } = require("../../packages/hubspot/client");
 
 const pool = new Pool({
@@ -24,6 +27,7 @@ async function ensureCoreTables() {
       summary TEXT
     );
   `);
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS campaigns (
       id TEXT PRIMARY KEY,
@@ -34,6 +38,7 @@ async function ensureCoreTables() {
       updated_at TIMESTAMPTZ
     );
   `);
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS campaign_snapshots (
       id BIGSERIAL PRIMARY KEY,
@@ -47,6 +52,7 @@ async function ensureCoreTables() {
 
 async function upsertCampaigns(rows) {
   if (!Array.isArray(rows) || !rows.length) return 0;
+
   const sql = `
     INSERT INTO campaigns (id, name, type, app_id, created_at, updated_at)
     VALUES ($1, $2, $3, $4, $5, $6)
@@ -57,6 +63,7 @@ async function upsertCampaigns(rows) {
         created_at = EXCLUDED.created_at,
         updated_at = EXCLUDED.updated_at
   `;
+
   let n = 0;
   for (const c of rows) {
     const params = [
@@ -76,6 +83,7 @@ async function upsertCampaigns(rows) {
 async function snapshotCampaignObjects() {
   const { rows } = await pool.query(`SELECT id FROM campaigns ORDER BY id`);
   let saved = 0;
+
   for (const row of rows) {
     try {
       const data = await getCampaignObject(row.id);
@@ -88,17 +96,28 @@ async function snapshotCampaignObjects() {
       console.warn("Object snapshot failed for campaign", row.id, "-", e.message);
     }
   }
+
   return saved;
 }
 
-async function createPlaceholderReport() {
+async function createWeeklyReport() {
   const weekStart = getMostRecentMonday(new Date());
-  const summary = `Placeholder report for week starting ${weekStart}`;
+
+  let summary = `Placeholder report for week starting ${weekStart}`;
+
+  try {
+    const gpt = await generateGptReport({ pool });
+    if (gpt) summary = gpt;
+  } catch (e) {
+    console.warn("GPT report generation failed:", e.message);
+  }
+
   await pool.query(
     "INSERT INTO reports (week_start, summary) VALUES ($1, $2) ON CONFLICT (week_start) DO UPDATE SET summary = EXCLUDED.summary;",
     [weekStart, summary]
   );
-  console.log("Inserted placeholder weekly report for", weekStart);
+
+  console.log("Inserted weekly report for", weekStart);
 
   const to = process.env.EMAIL_TO || process.env.SMTP_USER;
   if (to) await sendReportEmail({ to, subject: `Weekly marketing report (${weekStart})`, text: summary });
@@ -106,6 +125,7 @@ async function createPlaceholderReport() {
 
 async function main() {
   console.log("Worker booted. Scheduler initialising…");
+
   const RUN_ONCE = (process.env.RUN_ONCE || "").toLowerCase() === "true";
   const DISABLE_SCHEDULER = (process.env.DISABLE_SCHEDULER || "").toLowerCase() === "true";
 
@@ -114,12 +134,12 @@ async function main() {
   if (RUN_ONCE) {
     const all = await getAllCampaigns(500);
     await upsertCampaigns(all);
-    console.log(\`Campaigns upserted (all pages): \${all.length}\`);
+    console.log(`Campaigns upserted (all pages): ${all.length}`);
 
     const snaps = await snapshotCampaignObjects();
-    console.log(\`Campaign object snapshots saved: \${snaps}\`);
+    console.log(`Campaign object snapshots saved: ${snaps}`);
 
-    await createPlaceholderReport();
+    await createWeeklyReport();
     console.log("RUN_ONCE complete. Idling (no exit).");
   }
 
@@ -130,13 +150,14 @@ async function main() {
         const all = await getAllCampaigns(500);
         await upsertCampaigns(all);
         const snaps = await snapshotCampaignObjects();
-        console.log(\`Campaign object snapshots saved: \${snaps}\`);
-        await createPlaceholderReport();
+        console.log(`Campaign object snapshots saved: ${snaps}`);
+        await createWeeklyReport();
         console.log("[CRON] Weekly job finished.");
       } catch (err) {
         console.error("[CRON] Error:", err);
       }
     });
+
     console.log("Scheduler running. Waiting for next trigger…");
   } else {
     console.log("Scheduler disabled (DISABLE_SCHEDULER=true or RUN_ONCE=true). Idling.");
@@ -146,3 +167,4 @@ async function main() {
 }
 
 main().catch(err => console.error("Worker fatal error:", err));
+

@@ -10,3 +10,5 @@ yarn-error.log*
 # OS / Editor junk
 .DS_Store
 Thumbs.db
+apps/*/.env
+**/node_modules/

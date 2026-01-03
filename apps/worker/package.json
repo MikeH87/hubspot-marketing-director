@@ -1,4 +1,4 @@
-﻿{
+{
   "name": "marketing-director-worker",
   "version": "0.1.2",
   "private": true,
@@ -8,8 +8,10 @@
     "start": "node index.js"
   },
   "dependencies": {
+    "dotenv": "^17.2.3",
     "node-cron": "^3.0.3",
-    "pg": "^8.11.3",
-    "nodemailer": "^6.9.14"
+    "nodemailer": "^6.9.14",
+    "openai": "^6.15.0",
+    "pg": "^8.11.3"
   }
 }

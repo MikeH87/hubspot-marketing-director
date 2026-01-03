@@ -1,0 +1,96 @@
+{
+  "start": "2025-10-05T14:51:16.429Z",
+  "end": "2026-01-03T14:51:16.429Z",
+  "results": [
+    {
+      "name": "ads_accounts_v3",
+      "url": "https://api.hubapi.com/marketing/v3/ads/accounts",
+      "status": 404,
+      "ok": false,
+      "signal_score": 0,
+      "top_level_keys": [],
+      "result0_keys": [],
+      "body_preview": "<!DOCTYPE html> <html lang=en><meta charset=utf-8><title>Error</title><style>*,*::before,*::after{box-sizing:border-box}html,body{margin:0px;padding:0px}h4,p,img{margin:0px;padding:0px;border:0px;font-weight:normal;font-style:normal;font-size:100%;line-height:1;font-family:inherit}html{font-size:100%}header{display:block}img{border:0px}html,body{background-color:rgb(255,255,255)}body{margin:0px;fo"
+    },
+    {
+      "name": "ads_campaigns_v3",
+      "url": "https://api.hubapi.com/marketing/v3/ads/campaigns?limit=1",
+      "status": 404,
+      "ok": false,
+      "signal_score": 0,
+      "top_level_keys": [],
+      "result0_keys": [],
+      "body_preview": "<!DOCTYPE html> <html lang=en><meta charset=utf-8><title>Error</title><style>*,*::before,*::after{box-sizing:border-box}html,body{margin:0px;padding:0px}h4,p,img{margin:0px;padding:0px;border:0px;font-weight:normal;font-style:normal;font-size:100%;line-height:1;font-family:inherit}html{font-size:100%}header{display:block}img{border:0px}html,body{background-color:rgb(255,255,255)}body{margin:0px;fo"
+    },
+    {
+      "name": "ads_reports_v3_guess",
+      "url": "https://api.hubapi.com/marketing/v3/ads/reports?startTime=2025-10-05T14%3A51%3A16.429Z&endTime=2026-01-03T14%3A51%3A16.429Z",
+      "status": 404,
+      "ok": false,
+      "signal_score": 0,
+      "top_level_keys": [],
+      "result0_keys": [],
+      "body_preview": "<!DOCTYPE html> <html lang=en><meta charset=utf-8><title>Error</title><style>*,*::before,*::after{box-sizing:border-box}html,body{margin:0px;padding:0px}h4,p,img{margin:0px;padding:0px;border:0px;font-weight:normal;font-style:normal;font-size:100%;line-height:1;font-family:inherit}html{font-size:100%}header{display:block}img{border:0px}html,body{background-color:rgb(255,255,255)}body{margin:0px;fo"
+    },
+    {
+      "name": "analytics_v2_reports_guess",
+      "url": "https://api.hubapi.com/analytics/v2/reports",
+      "status": 404,
+      "ok": false,
+      "signal_score": 0,
+      "top_level_keys": [],
+      "result0_keys": [],
+      "body_preview": "<html> <head> <meta http-equiv=\"Content-Type\" content=\"text/html;charset=utf-8\"/> <title>Error 404 Not Found</title> </head> <body><h2>HTTP ERROR 404</h2> <p>Resource not found</p> </body> </html> "
+    },
+    {
+      "name": "analytics_v2_sessions_guess",
+      "url": "https://api.hubapi.com/analytics/v2/reports/sessions?start=2025-10-05T14%3A51%3A16.429Z&end=2026-01-03T14%3A51%3A16.429Z",
+      "status": 404,
+      "ok": false,
+      "signal_score": 0,
+      "top_level_keys": [],
+      "result0_keys": [],
+      "body_preview": "<html> <head> <meta http-equiv=\"Content-Type\" content=\"text/html;charset=utf-8\"/> <title>Error 404 Not Found</title> </head> <body><h2>HTTP ERROR 404</h2> <p>Resource not found</p> </body> </html> "
+    },
+    {
+      "name": "reports_v2_dashboards_guess",
+      "url": "https://api.hubapi.com/reports/v2/dashboards",
+      "status": 404,
+      "ok": false,
+      "signal_score": 0,
+      "top_level_keys": [],
+      "result0_keys": [],
+      "body_preview": "<html> <head> <meta http-equiv=\"Content-Type\" content=\"text/html;charset=utf-8\"/> <title>Error 404 Not Found</title> </head> <body><h2>HTTP ERROR 404</h2> <p>Resource not found</p> </body> </html> "
+    },
+    {
+      "name": "reports_v2_reports_guess",
+      "url": "https://api.hubapi.com/reports/v2/reports",
+      "status": 404,
+      "ok": false,
+      "signal_score": 0,
+      "top_level_keys": [],
+      "result0_keys": [],
+      "body_preview": "<html> <head> <meta http-equiv=\"Content-Type\" content=\"text/html;charset=utf-8\"/> <title>Error 404 Not Found</title> </head> <body><h2>HTTP ERROR 404</h2> <p>Resource not found</p> </body> </html> "
+    },
+    {
+      "name": "attribution_v3_guess",
+      "url": "https://api.hubapi.com/marketing/v3/attribution",
+      "status": 404,
+      "ok": false,
+      "signal_score": 0,
+      "top_level_keys": [],
+      "result0_keys": [],
+      "body_preview": "<!DOCTYPE html> <html lang=en><meta charset=utf-8><title>Error</title><style>*,*::before,*::after{box-sizing:border-box}html,body{margin:0px;padding:0px}h4,p,img{margin:0px;padding:0px;border:0px;font-weight:normal;font-style:normal;font-size:100%;line-height:1;font-family:inherit}html{font-size:100%}header{display:block}img{border:0px}html,body{background-color:rgb(255,255,255)}body{margin:0px;fo"
+    },
+    {
+      "name": "attribution_v2_guess",
+      "url": "https://api.hubapi.com/attribution/v2",
+      "status": 404,
+      "ok": false,
+      "signal_score": 0,
+      "top_level_keys": [],
+      "result0_keys": [],
+      "body_preview": "<!DOCTYPE html> <html lang=en><meta charset=utf-8><title>Error</title><style>*,*::before,*::after{box-sizing:border-box}html,body{margin:0px;padding:0px}h4,p,img{margin:0px;padding:0px;border:0px;font-weight:normal;font-style:normal;font-size:100%;line-height:1;font-family:inherit}html{font-size:100%}header{display:block}img{border:0px}html,body{background-color:rgb(255,255,255)}body{margin:0px;fo"
+    }
+  ]
+}
