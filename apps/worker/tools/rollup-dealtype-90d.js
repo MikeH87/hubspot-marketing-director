@@ -1,212 +1,176 @@
 ﻿require("dotenv").config();
 const { Pool } = require("pg");
 
-const HUBSPOT_TOKEN = process.env.HUBSPOT_PRIVATE_APP_TOKEN;
-const DB = process.env.DATABASE_URL;
+/**
+ * Roll up dealtype → revenue and wins into campaign_context_snapshot_90d
+ *
+ * Expects:
+ *  - campaign_context_snapshot_90d.deal_ids_90d (jsonb) to exist and contain an array of deal IDs (strings or numbers).
+ * Writes:
+ *  - revenue_by_dealtype_90d (jsonb) e.g. {"Product Sale": 18000, "Admin Sale": 0}
+ *  - deals_won_by_dealtype_90d (jsonb) e.g. {"Product Sale": 3, "Admin Sale": 1}
+ *
+ * Notes:
+ *  - Only counts deals in the rolling window already used when collecting deal_ids_90d.
+ *  - Treats a deal as "won" if dealstage is in the SALES_PIPELINE_WON_STAGES env var (comma-separated),
+ *    otherwise falls back to isClosed=true if present, else ignores win count.
+ */
 
-if (!HUBSPOT_TOKEN) throw new Error("Missing HUBSPOT_PRIVATE_APP_TOKEN in .env");
-if (!DB) throw new Error("Missing DATABASE_URL in .env");
-
-const pool = new Pool({
-  connectionString: DB,
-  ssl: { rejectUnauthorized: false },
-});
-
-async function hsFetch(url, opts = {}) {
-  const res = await fetch(url, {
-    ...opts,
-    headers: {
-      ...(opts.headers || {}),
-      Authorization: `Bearer ${HUBSPOT_TOKEN}`,
-      "Content-Type": "application/json",
-    },
-  });
-  const text = await res.text();
-  if (!res.ok) {
-    throw new Error(`HubSpot ${url} -> ${res.status} ${res.statusText} ${text}`);
-  }
-  return text ? JSON.parse(text) : {};
+function parseJsonSafe(v) {
+  if (v == null) return null;
+  if (typeof v === "object") return v;
+  try { return JSON.parse(v); } catch { return null; }
 }
 
-async function hsBatchReadDeals(ids) {
-  const chunks = [];
-  for (let i = 0; i < ids.length; i += 100) chunks.push(ids.slice(i, i + 100));
-  const out = new Map();
-
-  for (const chunk of chunks) {
-    const body = {
-      properties: ["dealtype", "amount", "closedate", "hs_is_closed_won", "pipeline", "dealstage", "dealname"],
-      inputs: chunk.map((id) => ({ id: String(id) })),
-    };
-    const j = await hsFetch("https://api.hubapi.com/crm/v3/objects/deals/batch/read", {
-      method: "POST",
-      body: JSON.stringify(body),
-    });
-
-    for (const d of j.results || []) out.set(String(d.id), d.properties || {});
-  }
-  return out;
+function normaliseId(x) {
+  if (x == null) return null;
+  const s = String(x).trim();
+  return s.length ? s : null;
 }
 
-function safeNum(x) {
-  const n = Number(x);
+function parseWonStages() {
+  const raw = process.env.SALES_PIPELINE_WON_STAGES || "";
+  return raw
+    .split(",")
+    .map(s => s.trim())
+    .filter(Boolean);
+}
+
+function moneyToNumber(v) {
+  if (v == null) return 0;
+  const n = Number(v);
   return Number.isFinite(n) ? n : 0;
 }
 
-function addTo(obj, key, val) {
-  obj[key] = (obj[key] || 0) + val;
-}
+(async () => {
+  const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false },
+  });
 
-async function main() {
-  // Prefer filtered table if present
-  const tableCandidates = ["campaign_context_snapshot_90d_filtered", "campaign_context_snapshot_90d"];
-  let table = null;
+  const wonStages = new Set(parseWonStages());
+  const haveWonStages = wonStages.size > 0;
 
-  for (const t of tableCandidates) {
-    const exists = await pool.query(
-      `select 1 from information_schema.tables where table_schema='public' and table_name=$1`,
-      [t]
-    );
-    if (exists.rowCount) { table = t; break; }
-  }
-  if (!table) throw new Error("Could not find campaign_context_snapshot_90d(_filtered) in the database.");
+  // 1) Load all campaigns that have deal_ids_90d populated
+  const snapRows = await pool.query(`
+    select id, campaign_id, campaign_name, deal_ids_90d
+    from campaign_context_snapshot_90d
+    where deal_ids_90d is not null
+  `);
 
-  // Try to find a deal IDs column we can use
-  const cols = await pool.query(
-    `select column_name, data_type
-     from information_schema.columns
-     where table_schema='public' and table_name=$1
-     order by ordinal_position`,
-    [table]
-  );
-
-  const colNames = cols.rows.map(r => r.column_name);
-
-  const dealIdColCandidates = [
-    "deal_ids_90d",
-    "deal_ids",
-    "deals_90d_ids",
-    "deal_ids_sales_90d",
-    "deal_ids_sales",
-    "deals_json",
-    "deals_90d",
-    "deals",
-  ];
-
-  const dealIdCol = dealIdColCandidates.find(c => colNames.includes(c));
-  if (!dealIdCol) {
-    throw new Error(
-      `Could not find a deals id column on ${table}. I looked for: ${dealIdColCandidates.join(", ")}\n` +
-      `Columns found: ${colNames.join(", ")}`
-    );
-  }
-
-  // Add roll-up columns if missing
-  const ensureCols = [
-    { name: "won_count_by_dealtype_90d", type: "jsonb" },
-    { name: "won_revenue_by_dealtype_90d", type: "jsonb" },
-    { name: "all_count_by_dealtype_90d", type: "jsonb" },
-  ];
-
-  for (const c of ensureCols) {
-    if (!colNames.includes(c.name)) {
-      await pool.query(`alter table ${table} add column if not exists ${c.name} ${c.type} default '{}'::jsonb`);
-    }
-  }
-
-  // Pull snapshot rows (campaign_id + deal ids column)
-  const rows = await pool.query(`select campaign_id, ${dealIdCol} as deal_ids from ${table}`);
-  const campaignRows = rows.rows;
-
-  // Collect all deal IDs
-  const allDealIds = new Set();
-
-  function extractIds(v) {
-    if (!v) return [];
-    // Could be array, jsonb, stringified json, or comma-separated text
-    if (Array.isArray(v)) return v.map(String);
-    if (typeof v === "object") {
-      // Some shapes might store {ids:[...]} or [{id:...}, ...]
-      if (Array.isArray(v.ids)) return v.ids.map(String);
-      if (Array.isArray(v.deals)) return v.deals.map(d => String(d.id || d));
-      return [];
-    }
-    if (typeof v === "string") {
-      const s = v.trim();
-      if (!s) return [];
-      try {
-        const j = JSON.parse(s);
-        return extractIds(j);
-      } catch {
-        // comma-separated fallback
-        return s.split(",").map(x => x.trim()).filter(Boolean);
-      }
-    }
-    return [];
-  }
-
-  const perCampaignIds = new Map();
-  for (const r of campaignRows) {
-    const ids = extractIds(r.deal_ids).map(String).filter(Boolean);
-    perCampaignIds.set(String(r.campaign_id), ids);
-    for (const id of ids) allDealIds.add(id);
-  }
-
-  const allIdsArr = Array.from(allDealIds);
-  console.log(`Table: ${table}`);
-  console.log(`Using deal id column: ${dealIdCol}`);
-  console.log(`Campaign rows: ${campaignRows.length}`);
-  console.log(`Unique deal ids referenced: ${allIdsArr.length}`);
-
-  if (allIdsArr.length === 0) {
-    console.log("No deal ids found in snapshot rows. Nothing to roll up.");
+  if (snapRows.rowCount === 0) {
+    console.log("No rows found with deal_ids_90d set. Nothing to roll up.");
     await pool.end();
     return;
   }
 
-  // Fetch deal details in batches
-  const dealMap = await hsBatchReadDeals(allIdsArr);
+  // 2) Build set of all deal IDs referenced
+  const campaignDealMap = new Map(); // snap_id -> array(dealIds)
+  const allDealIds = new Set();
 
-  // Build per-campaign rollups and write back
+  for (const r of snapRows.rows) {
+    const parsed = parseJsonSafe(r.deal_ids_90d);
+    let ids = [];
+
+    if (Array.isArray(parsed)) ids = parsed;
+    else if (parsed && Array.isArray(parsed.dealIds)) ids = parsed.dealIds;
+    else if (parsed && Array.isArray(parsed.deals)) ids = parsed.deals;
+
+    const norm = ids.map(normaliseId).filter(Boolean);
+    campaignDealMap.set(r.id, norm);
+
+    for (const id of norm) allDealIds.add(id);
+  }
+
+  const allIdsArr = Array.from(allDealIds);
+  if (allIdsArr.length === 0) {
+    console.log("deal_ids_90d exists but contains no IDs. Nothing to roll up.");
+    await pool.end();
+    return;
+  }
+
+  // 3) Pull deal properties for all referenced deals (chunked)
+  // We depend only on CRM deal properties already proven: dealtype, dealstage, amount
+  // If you want a different revenue field later, we can swap it (e.g., hs_closed_amount).
+  const dealInfo = new Map(); // dealId -> { dealtype, dealstage, amount, isclosed }
+  const chunkSize = 500;
+
+  for (let i = 0; i < allIdsArr.length; i += chunkSize) {
+    const chunk = allIdsArr.slice(i, i + chunkSize);
+
+    const q = await pool.query(
+      `
+      select id,
+             properties->>'dealtype'  as dealtype,
+             properties->>'dealstage' as dealstage,
+             properties->>'amount'    as amount,
+             properties->>'hs_is_closed' as hs_is_closed,
+             properties->>'isClosed'  as isClosed
+      from deals
+      where id = any($1::text[])
+      `,
+      [chunk]
+    );
+
+    for (const d of q.rows) {
+      const id = normaliseId(d.id);
+      if (!id) continue;
+
+      const dealtype = (d.dealtype || "Unknown").trim() || "Unknown";
+      const dealstage = (d.dealstage || "").trim();
+      const amount = moneyToNumber(d.amount);
+
+      // attempt to interpret closed/won
+      const closedFlagRaw = (d.hs_is_closed ?? d.isclosed ?? d.isClosed);
+      const isClosed = String(closedFlagRaw).toLowerCase() === "true";
+
+      dealInfo.set(id, { dealtype, dealstage, amount, isClosed });
+    }
+  }
+
+  // 4) Roll up per campaign snapshot row
   let updated = 0;
-  for (const [campaignId, ids] of perCampaignIds.entries()) {
-    const allCount = {};
-    const wonCount = {};
-    const wonRevenue = {};
 
-    for (const id of ids) {
-      const p = dealMap.get(String(id));
-      if (!p) continue;
+  for (const [snapId, ids] of campaignDealMap.entries()) {
+    const revenueByType = {};
+    const winsByType = {};
 
-      const dt = (p.dealtype || "Unknown").trim() || "Unknown";
-      addTo(allCount, dt, 1);
+    for (const dealId of ids) {
+      const info = dealInfo.get(dealId);
+      if (!info) continue;
 
-      const isWon = String(p.hs_is_closed_won).toLowerCase() === "true";
+      const t = info.dealtype || "Unknown";
+      revenueByType[t] = (revenueByType[t] || 0) + info.amount;
+
+      let isWon = false;
+      if (haveWonStages) {
+        isWon = wonStages.has(info.dealstage);
+      } else {
+        // fallback only if we have no stage config
+        isWon = info.isClosed === true;
+      }
+
       if (isWon) {
-        addTo(wonCount, dt, 1);
-        addTo(wonRevenue, dt, safeNum(p.amount));
+        winsByType[t] = (winsByType[t] || 0) + 1;
       }
     }
 
     await pool.query(
-      `update ${table}
-       set all_count_by_dealtype_90d = $2::jsonb,
-           won_count_by_dealtype_90d = $3::jsonb,
-           won_revenue_by_dealtype_90d = $4::jsonb
-       where campaign_id = $1`,
-      [campaignId, JSON.stringify(allCount), JSON.stringify(wonCount), JSON.stringify(wonRevenue)]
+      `
+      update campaign_context_snapshot_90d
+      set revenue_by_dealtype_90d = $1::jsonb,
+          deals_won_by_dealtype_90d = $2::jsonb
+      where id = $3
+      `,
+      [JSON.stringify(revenueByType), JSON.stringify(winsByType), snapId]
     );
 
-    updated++;
+    updated += 1;
   }
 
-  console.log(`Updated campaigns: ${updated}`);
-  console.log("Done.");
-
+  console.log(`Rollup complete. Updated ${updated} campaign snapshot rows.`);
   await pool.end();
-}
-
-main().catch((e) => {
-  console.error("FAILED:", e.message);
+})().catch(err => {
+  console.error("FAILED:", err && err.stack ? err.stack : err);
   process.exit(1);
 });
