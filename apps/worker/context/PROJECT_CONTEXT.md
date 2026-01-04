@@ -61,3 +61,27 @@
   3) Add rollups + reporting changes only after audits pass.
 - Keep current cron untouched until new pipeline validated.
 
+
+## Audit findings (Jan 2026)
+
+### Form submissions + UTMs
+- Form submissions API returns objects with keys: conversionId, pageUrl, submittedAt, values.
+- UTM fields are present in submission values: utm_source, utm_medium, utm_campaign, utm_term, utm_content.
+- Last 90 days audit:
+  - Total submissions analysed: 703
+  - Email present: 690 (98.2%)
+  - Core UTMs (source+medium+campaign) present: 633 (90.0%)
+- Conclusion: Attribution should use UTMs from submission payload + email join, not contact UTM properties.
+
+### Campaign API shape
+- marketing/v3/campaigns returns campaigns with empty properties unless explicitly requested.
+- Campaign name property is hs_name (not name).
+  - Example: properties: {"hs_name":"All emails start Nurture: All Products"}
+
+### Spend API availability
+- HubSpot Ads endpoints under /ads/... returned HTTP 404 in this portal for reporting/accounts/campaigns.
+- Campaign spend endpoints probed:
+  - GET /marketing/v3/campaigns/{id}/spend returns HTTP 405 (Method Not Allowed)
+  - Other guessed spend item read endpoints returned 400/404.
+- Conclusion: Do not assume HubSpot exposes daily spend via API. For accurate ROAS by period, store daily spend in Postgres sourced from native ad platform APIs (Meta/Google/LinkedIn) + existing Bing/Twitter spend items where available.
+
