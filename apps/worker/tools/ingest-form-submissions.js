@@ -81,6 +81,7 @@ async function main() {
 
   let inserted = 0;
   let returned = 0;
+  let processed = 0; // within cutoff
   let scanned = 0;
   let skippedPractitioner = 0;
 
