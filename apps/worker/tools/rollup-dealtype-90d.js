@@ -41,6 +41,15 @@ function parseWonStages() {
   return raw.split(",").map(s => s.trim()).filter(Boolean);
 }
 
+const EXCLUDED_DEALTYPES = new Set(
+  (process.env.EXCLUDED_DEALTYPES || "SSAS,FIC")
+    .split(",")
+    .map(s => s.trim().toLowerCase())
+    .filter(Boolean)
+);
+function isExcludedDealtype(t) {
+  return EXCLUDED_DEALTYPES.has(String(t || "").trim().toLowerCase());
+}
 function chunk(arr, size) {
   const out = [];
   for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
@@ -69,6 +78,7 @@ async function hubspotBatchReadDeals(dealIds) {
 
       const p = d.properties || {};
       const dealtype = (String(p.dealtype || "Unknown").trim() || "Unknown");
+      if (isExcludedDealtype(dealtype)) continue;
       const dealstage = String(p.dealstage || "").trim();
       const amount = moneyToNumber(p.amount);
 
@@ -177,3 +187,4 @@ async function hubspotBatchReadDeals(dealIds) {
   console.error("FAILED:", err && err.stack ? err.stack : err);
   process.exit(1);
 });
+

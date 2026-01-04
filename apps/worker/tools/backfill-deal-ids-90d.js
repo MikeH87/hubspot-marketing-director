@@ -13,6 +13,12 @@ function normName(s) {
   return (s || "").toString().trim().toLowerCase();
 }
 
+const EXCLUDED_CONTACT_TYPES = new Set(["Additional Member", "Additional Director"].map(s => s.toLowerCase()));
+function isExcludedContactType(productType) {
+  const v = (productType || "").toString().trim().toLowerCase();
+  return EXCLUDED_CONTACT_TYPES.has(v);
+}
+
 async function getAllDealsCreatedInWindow(fromISO, toISO) {
   // Uses CRM search API to avoid paging the entire portal
   // createdate is ms timestamp in HubSpot filters
@@ -55,9 +61,9 @@ async function getDealContactIds(dealId) {
 }
 
 async function getContactCampaignKey(contactId) {
-  // Pull a small set of best-guess campaign fields.
-  // We’ll try them in priority order.
+  // Pull campaign fields + product_type (for exclusions).
   const props = [
+    "product_type",
     "hs_analytics_last_touch_converting_campaign",
     "hs_analytics_first_touch_converting_campaign",
     "engagements_last_meeting_booked_campaign",
@@ -69,13 +75,16 @@ async function getContactCampaignKey(contactId) {
   const res = await hsGet(`/crm/v3/objects/contacts/${contactId}?${q}`);
   const p = (res && res.properties) || {};
 
-  // Pick first non-empty
+  const productType = (p.product_type || "").toString().trim();
+
+  // Pick first non-empty campaign field (skip product_type)
   for (const k of props) {
+    if (k === "product_type") continue;
     const v = (p[k] || "").toString().trim();
-    if (v) return { key: k, value: v };
+    if (v) return { key: k, value: v, productType };
   }
 
-  return { key: null, value: null };
+  return { key: null, value: null, productType };
 }
 
 async function main() {
@@ -125,10 +134,20 @@ async function main() {
     if (!contactIds.length) continue;
     dealsWithContactAssoc++;
 
-    // We’ll use the first associated contact as “primary” for attribution, to match your current approach
-    const primaryContact = contactIds[0];
+    // Choose a primary contact for attribution:
+    // - skip operational/admin contacts (Additional Member/Director)
+    // - prefer a contact that has a campaign value
+    let campaignVal = null;
 
-    const { value: campaignVal } = await getContactCampaignKey(primaryContact);
+    for (const cid of contactIds) {
+      const info = await getContactCampaignKey(cid);
+      if (isExcludedContactType(info.productType)) continue;
+
+      if (info.value) {
+        campaignVal = info.value;
+        break;
+      }
+    }
     if (!campaignVal) {
       unmatched.set("(no campaign on contact)", (unmatched.get("(no campaign on contact)") || 0) + 1);
       continue;
@@ -189,5 +208,6 @@ main().catch(e => {
   console.error("FAILED:", e.message);
   process.exit(1);
 });
+
 
 
