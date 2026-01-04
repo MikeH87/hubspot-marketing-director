@@ -3,7 +3,7 @@ const { Pool } = require("pg");
 
 // IMPORTANT: tools/ is 2 levels below repo root -> apps/worker/tools
 // So to reach /packages we need ../../../packages
-const { hsGet } = require("../../../packages/hubspot/client");
+const { hsGet, hsPost } = require("../../../packages/hubspot/client");
 
 function isUuidLike(s) {
   return typeof s === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s.trim());
@@ -36,7 +36,7 @@ async function getAllDealsCreatedInWindow(fromISO, toISO) {
       after: after || undefined
     };
 
-    const res = await hsGet("/crm/v3/objects/deals/search", { method: "POST", body });
+    const res = await hsPost("/crm/v3/objects/deals/search", body);
     if (res && res.results) out.push(...res.results);
 
     const next = res && res.paging && res.paging.next && res.paging.next.after;
@@ -189,3 +189,5 @@ main().catch(e => {
   console.error("FAILED:", e.message);
   process.exit(1);
 });
+
+

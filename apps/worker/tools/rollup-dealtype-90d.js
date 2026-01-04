@@ -1,19 +1,21 @@
-﻿require("dotenv").config();
+﻿require("dotenv").config({ path: __dirname + "/../.env" });
+
 const { Pool } = require("pg");
+const { hsPost } = require("../../../packages/hubspot/client");
 
 /**
- * Roll up dealtype → revenue and wins into campaign_context_snapshot_90d
+ * Roll up dealtype -> revenue + won counts into campaign_context_snapshot_90d.
  *
- * Expects:
- *  - campaign_context_snapshot_90d.deal_ids_90d (jsonb) to exist and contain an array of deal IDs (strings or numbers).
+ * Requires:
+ *  - campaign_context_snapshot_90d.deal_ids_90d (jsonb array of deal IDs)
+ *
  * Writes:
- *  - revenue_by_dealtype_90d (jsonb) e.g. {"Product Sale": 18000, "Admin Sale": 0}
- *  - deals_won_by_dealtype_90d (jsonb) e.g. {"Product Sale": 3, "Admin Sale": 1}
+ *  - revenue_by_dealtype_90d (jsonb map)
+ *  - deals_won_by_dealtype_90d (jsonb map)
  *
- * Notes:
- *  - Only counts deals in the rolling window already used when collecting deal_ids_90d.
- *  - Treats a deal as "won" if dealstage is in the SALES_PIPELINE_WON_STAGES env var (comma-separated),
- *    otherwise falls back to isClosed=true if present, else ignores win count.
+ * Win logic:
+ *  - If SALES_PIPELINE_WON_STAGES env var is set (comma-separated dealstage values), uses that.
+ *  - Else falls back to hs_is_closed / isClosed boolean.
  */
 
 function parseJsonSafe(v) {
@@ -28,18 +30,56 @@ function normaliseId(x) {
   return s.length ? s : null;
 }
 
-function parseWonStages() {
-  const raw = process.env.SALES_PIPELINE_WON_STAGES || "";
-  return raw
-    .split(",")
-    .map(s => s.trim())
-    .filter(Boolean);
-}
-
 function moneyToNumber(v) {
   if (v == null) return 0;
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
+}
+
+function parseWonStages() {
+  const raw = process.env.SALES_PIPELINE_WON_STAGES || "";
+  return raw.split(",").map(s => s.trim()).filter(Boolean);
+}
+
+function chunk(arr, size) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
+async function hubspotBatchReadDeals(dealIds) {
+  // Returns Map(dealId -> { dealtype, dealstage, amount, isClosed })
+  const dealInfo = new Map();
+
+  const props = ["dealtype", "dealstage", "amount", "hs_is_closed", "isClosed"];
+  const batches = chunk(dealIds, 100);
+
+  for (const ids of batches) {
+    const body = {
+      inputs: ids.map(id => ({ id: String(id) })),
+      properties: props,
+    };
+
+    const j = await hsPost("/crm/v3/objects/deals/batch/read", body);
+    const results = (j && j.results) ? j.results : [];
+
+    for (const d of results) {
+      const id = normaliseId(d.id);
+      if (!id) continue;
+
+      const p = d.properties || {};
+      const dealtype = (String(p.dealtype || "Unknown").trim() || "Unknown");
+      const dealstage = String(p.dealstage || "").trim();
+      const amount = moneyToNumber(p.amount);
+
+      const closedRaw = (p.hs_is_closed != null) ? p.hs_is_closed : p.isClosed;
+      const isClosed = String(closedRaw).toLowerCase() === "true";
+
+      dealInfo.set(id, { dealtype, dealstage, amount, isClosed });
+    }
+  }
+
+  return dealInfo;
 }
 
 (async () => {
@@ -48,10 +88,7 @@ function moneyToNumber(v) {
     ssl: { rejectUnauthorized: false },
   });
 
-  const wonStages = new Set(parseWonStages());
-  const haveWonStages = wonStages.size > 0;
-
-  // 1) Load all campaigns that have deal_ids_90d populated
+  // 1) Load all snapshot rows with deal IDs
   const snapRows = await pool.query(`
     select id, campaign_id, campaign_name, deal_ids_90d
     from campaign_context_snapshot_90d
@@ -64,8 +101,8 @@ function moneyToNumber(v) {
     return;
   }
 
-  // 2) Build set of all deal IDs referenced
-  const campaignDealMap = new Map(); // snap_id -> array(dealIds)
+  // 2) Build mapping snap_id -> dealIds; and set of all deal IDs
+  const campaignDealMap = new Map();
   const allDealIds = new Set();
 
   for (const r of snapRows.rows) {
@@ -89,47 +126,18 @@ function moneyToNumber(v) {
     return;
   }
 
-  // 3) Pull deal properties for all referenced deals (chunked)
-  // We depend only on CRM deal properties already proven: dealtype, dealstage, amount
-  // If you want a different revenue field later, we can swap it (e.g., hs_closed_amount).
-  const dealInfo = new Map(); // dealId -> { dealtype, dealstage, amount, isclosed }
-  const chunkSize = 500;
+  console.log("Total unique deal IDs to roll up: " + allIdsArr.length);
 
-  for (let i = 0; i < allIdsArr.length; i += chunkSize) {
-    const chunk = allIdsArr.slice(i, i + chunkSize);
+  // 3) Fetch deal properties from HubSpot (no DB deals table)
+  const dealInfo = await hubspotBatchReadDeals(allIdsArr);
+  console.log("Deal records fetched from HubSpot: " + dealInfo.size);
 
-    const q = await pool.query(
-      `
-      select id,
-             properties->>'dealtype'  as dealtype,
-             properties->>'dealstage' as dealstage,
-             properties->>'amount'    as amount,
-             properties->>'hs_is_closed' as hs_is_closed,
-             properties->>'isClosed'  as isClosed
-      from deals
-      where id = any($1::text[])
-      `,
-      [chunk]
-    );
+  // 4) Roll up per snapshot row and write back
+  const wonStages = new Set(parseWonStages());
+  const haveWonStages = wonStages.size > 0;
 
-    for (const d of q.rows) {
-      const id = normaliseId(d.id);
-      if (!id) continue;
-
-      const dealtype = (d.dealtype || "Unknown").trim() || "Unknown";
-      const dealstage = (d.dealstage || "").trim();
-      const amount = moneyToNumber(d.amount);
-
-      // attempt to interpret closed/won
-      const closedFlagRaw = (d.hs_is_closed ?? d.isclosed ?? d.isClosed);
-      const isClosed = String(closedFlagRaw).toLowerCase() === "true";
-
-      dealInfo.set(id, { dealtype, dealstage, amount, isClosed });
-    }
-  }
-
-  // 4) Roll up per campaign snapshot row
   let updated = 0;
+  let totalRowCount = 0;
 
   for (const [snapId, ids] of campaignDealMap.entries()) {
     const revenueByType = {};
@@ -143,19 +151,13 @@ function moneyToNumber(v) {
       revenueByType[t] = (revenueByType[t] || 0) + info.amount;
 
       let isWon = false;
-      if (haveWonStages) {
-        isWon = wonStages.has(info.dealstage);
-      } else {
-        // fallback only if we have no stage config
-        isWon = info.isClosed === true;
-      }
+      if (haveWonStages) isWon = wonStages.has(info.dealstage);
+      else isWon = info.isClosed === true;
 
-      if (isWon) {
-        winsByType[t] = (winsByType[t] || 0) + 1;
-      }
+      if (isWon) winsByType[t] = (winsByType[t] || 0) + 1;
     }
 
-    await pool.query(
+    const res = await pool.query(
       `
       update campaign_context_snapshot_90d
       set revenue_by_dealtype_90d = $1::jsonb,
@@ -166,9 +168,10 @@ function moneyToNumber(v) {
     );
 
     updated += 1;
+    totalRowCount += res.rowCount || 0;
   }
 
-  console.log(`Rollup complete. Updated ${updated} campaign snapshot rows.`);
+  console.log("Rollup complete. Updated " + updated + " snapshot rows. SQL rowCount sum: " + totalRowCount);
   await pool.end();
 })().catch(err => {
   console.error("FAILED:", err && err.stack ? err.stack : err);
