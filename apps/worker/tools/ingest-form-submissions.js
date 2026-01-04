@@ -80,6 +80,7 @@ async function main() {
   const forms = await fetchJSON("https://api.hubapi.com/forms/v2/forms");
 
   let inserted = 0;
+  let returned = 0;
   let scanned = 0;
   let skippedPractitioner = 0;
 
