@@ -1,7 +1,10 @@
 ﻿/**
  * Ingest HubSpot Leads into Postgres (lead_facts_raw)
- * - Pulls last 90 days by lastmodifieddate (captures resets/updates)
- * - Upserts by lead_id
+ *
+ * Usage:
+ *   node tools/ingest-leads-90d.js                    # default 90 days, full run
+ *   node tools/ingest-leads-90d.js --days 7 --maxPages 1
+ *   node tools/ingest-leads-90d.js --days 30 --maxLeads 500
  */
 const { Client } = require("pg");
 
@@ -11,25 +14,30 @@ const connectionString = process.env.DATABASE_URL || process.env.RENDER_DATABASE
 if (!HUBSPOT_TOKEN) { console.error("Missing HUBSPOT_PRIVATE_APP_TOKEN"); console.log("STEP10C_FAILED"); process.exit(1); }
 if (!connectionString) { console.error("Missing DATABASE_URL (or RENDER_DATABASE_URL)"); console.log("STEP10C_FAILED"); process.exit(1); }
 
-const HEADERS = { Authorization: `Bearer ${HUBSPOT_TOKEN}`, "Content-Type": "application/json" };
+const HEADERS_JSON = { Authorization: `Bearer ${HUBSPOT_TOKEN}`, "Content-Type": "application/json" };
+const HEADERS = { Authorization: `Bearer ${HUBSPOT_TOKEN}` };
+
+function argNum(name, fallback) {
+  const i = process.argv.indexOf(name);
+  if (i === -1) return fallback;
+  const v = Number(process.argv[i + 1]);
+  return Number.isFinite(v) ? v : fallback;
+}
+
+const DAYS = argNum("--days", 90);
+const MAX_PAGES = argNum("--maxPages", 0);   // 0 = unlimited
+const MAX_LEADS = argNum("--maxLeads", 0);   // 0 = unlimited
 
 async function fetchJSON(url) {
-  const res = await fetch(url, { headers: { Authorization: `Bearer ${HUBSPOT_TOKEN}` } });
+  const res = await fetch(url, { headers: HEADERS });
   const text = await res.text();
   let json = null; try { json = JSON.parse(text); } catch {}
   if (!res.ok) throw new Error(`${res.status} ${text}`);
   return json;
 }
 
-async function getValidLeadPropertyNames() {
-  // Leads properties endpoint (we already proved this works in STEP10A)
-  const j = await fetchJSON("https://api.hubapi.com/crm/v3/properties/leads");
-  const names = new Set((j.results || []).map(r => r.name));
-  return names;
-}
-
 async function postJSON(url, body) {
-  const res = await fetch(url, { method: "POST", headers: HEADERS, body: JSON.stringify(body) });
+  const res = await fetch(url, { method: "POST", headers: HEADERS_JSON, body: JSON.stringify(body) });
   const text = await res.text();
   let json = null; try { json = JSON.parse(text); } catch {}
   if (!res.ok) throw new Error(`${res.status} ${text}`);
@@ -38,25 +46,24 @@ async function postJSON(url, body) {
 
 function toIso(val, fallbackIso) {
   if (val === undefined || val === null) return fallbackIso;
-  // If it's already an ISO-ish string, try it directly
   if (typeof val === "string" && val.includes("T")) {
     const d = new Date(val);
     return isNaN(d.getTime()) ? fallbackIso : d.toISOString();
   }
-  // Try numeric epoch millis
   const n = Number(val);
   if (!Number.isFinite(n)) return fallbackIso;
   const d = new Date(n);
   return isNaN(d.getTime()) ? fallbackIso : d.toISOString();
 }
 
-async function main() {
-  const DAYS = 90;
-  const sinceMs = Date.now() - DAYS*24*60*60*1000;
+async function getValidLeadPropertyNames() {
+  const j = await fetchJSON("https://api.hubapi.com/crm/v3/properties/leads");
+  return new Set((j.results || []).map(r => r.name));
+}
 
-  // We'll ask for a broad set of likely properties and keep whichever exist.
-  // (HubSpot will ignore unknown properties in the response, but search requires valid property names in 'properties'.)
-  // From your discovery, hs_lead_disqualification_reason exists.
+async function main() {
+  const sinceMs = Date.now() - DAYS * 24 * 60 * 60 * 1000;
+
   const desired = [
     "hs_createdate",
     "hs_lastmodifieddate",
@@ -72,10 +79,8 @@ async function main() {
   const validNames = await getValidLeadPropertyNames();
   const properties = desired.filter(x => validNames.has(x));
 
-  // Choose a valid "modified date" field for filtering/sorting
   const modifiedFieldCandidates = ["hs_lastmodifieddate", "lastmodifieddate", "hs_lastmodified_date"];
   const modifiedField = modifiedFieldCandidates.find(x => validNames.has(x)) || "hs_lastmodifieddate";
-
 
   const client = new Client({
     connectionString,
@@ -85,8 +90,12 @@ async function main() {
 
   let after = 0;
   let total = 0;
+  let pages = 0;
 
   while (true) {
+    if (MAX_PAGES > 0 && pages >= MAX_PAGES) break;
+    if (MAX_LEADS > 0 && total >= MAX_LEADS) break;
+
     const body = {
       filterGroups: [
         { filters: [{ propertyName: modifiedField, operator: "GTE", value: String(sinceMs) }] }
@@ -99,9 +108,13 @@ async function main() {
 
     const j = await postJSON("https://api.hubapi.com/crm/v3/objects/leads/search", body);
     const results = j.results || [];
-    console.log(`Page fetched: ${results.length} leads (after=${after || 0})`);
+    pages++;
+
+    console.log(`Page fetched: ${results.length} leads (after=${after})`);
 
     for (const r of results) {
+      if (MAX_LEADS > 0 && total >= MAX_LEADS) break;
+
       total++;
       const p = r.properties || {};
 
@@ -111,7 +124,6 @@ async function main() {
 
       const lead_status = p.hs_lead_status || p.lead_status || null;
       const lead_stage  = p.hs_lead_stage  || p.lead_stage  || null;
-
       const owner_id = p.hubspot_owner_id || p.hs_owner_id || null;
       const disq = p.hs_lead_disqualification_reason || null;
 
@@ -144,6 +156,8 @@ async function main() {
   await client.end();
 
   console.log("=== INGEST LEADS ===");
+  console.log(`Days window: ${DAYS}`);
+  console.log(`Pages fetched: ${pages}`);
   console.log(`Leads upserted (loop count): ${total}`);
   console.log(`Rows in DB updated in last 90d: ${verify.rows[0].c}`);
   console.log("STEP10C_OK");
