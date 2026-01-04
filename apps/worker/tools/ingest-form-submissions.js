@@ -99,6 +99,7 @@ async function main() {
 
     for (const s of results) {
       scanned++;
+      processed++;
       const submittedAtMs = Number(s.submittedAt || 0);
       if (!Number.isFinite(submittedAtMs) || submittedAtMs < cutoffMs) continue;
       const submittedAt = new Date(submittedAtMs);
@@ -158,8 +159,9 @@ async function main() {
   console.log("=== INGEST FORM SUBMISSIONS ===");
   console.log(`Days window: ${DAYS}`);
   console.log(`Forms excluded (Practitioner): ${skippedPractitioner}`);
-  console.log(`Submissions scanned: ${scanned}`);
-  console.log(`Rows in DB within window: ${verify.rows[0].c}`);
+  console.log(`Submissions returned by HubSpot: ${returned}`);
+  console.log(`Submissions processed (within cutoff): ${processed}`);
+console.log(`Rows in DB within window: ${verify.rows[0].c}`);
   console.log("STEP9A_OK");
 }
 
