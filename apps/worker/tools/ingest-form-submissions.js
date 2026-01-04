@@ -69,6 +69,7 @@ function normStr(x) {
 
 async function main() {
   const since = Date.now() - DAYS * 24 * 60 * 60 * 1000;
+  const cutoffMs = since;
 
   const client = new Client({
     connectionString,
@@ -96,7 +97,9 @@ async function main() {
 
     for (const s of results) {
       scanned++;
-      const submittedAt = new Date(Number(s.submittedAt || 0));
+      const submittedAtMs = Number(s.submittedAt || 0);
+      if (!Number.isFinite(submittedAtMs) || submittedAtMs < cutoffMs) continue;
+      const submittedAt = new Date(submittedAtMs);
       if (isNaN(submittedAt.getTime())) continue;
 
       const pageUrl = normStr(s.pageUrl);
