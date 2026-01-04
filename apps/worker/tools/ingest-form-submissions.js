@@ -94,6 +94,7 @@ async function main() {
     const url = `https://api.hubapi.com/form-integrations/v1/submissions/forms/${formGuid}?since=${since}`;
     const submissions = await fetchJSON(url);
     const results = submissions.results || [];
+    returned += results.length;
 
     for (const s of results) {
       scanned++;
