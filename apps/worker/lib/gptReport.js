@@ -15,7 +15,7 @@ const { Pool } = pg;
 // OpenAI client (CommonJS-safe)
 const OpenAIImport = require("openai");
 const OpenAI = OpenAIImport?.default || OpenAIImport;
-
+const { getCampaignFunnel90dByUtmCampaign } = require("./campaignFunnel");
 function need(name) {
   const v = process.env[name];
   if (!v) throw new Error(`Missing ${name}`);
@@ -59,7 +59,8 @@ async function tableColumns(pool, tableName) {
 async function getLatestSalesTruth(pool) {
   // We try a few shapes since we’ve iterated during the build.
   const candidates = [
-    { table: "sales_truth_totals_90d", cols: ["window_start", "window_end", "deals_won", "revenue_won_amount", "units_sold"] },
+    { table: "sales_truth_totals_90d", cols: ["window_start_date", "window_end_date", "deals_won_count", "revenue_won", "units_sold", "revenue_new_prospect", "revenue_old_prospect"] },
+{ table: "sales_truth_totals_90d", cols: ["window_start", "window_end", "deals_won", "revenue_won_amount", "units_sold"] },
     { table: "sales_truth_totals_90d", cols: ["window_start", "window_end", "deals_won", "revenue_won", "units_sold"] },
     { table: "sales_truth_totals_90d", cols: ["window_start_date", "window_end_date", "deals_won", "revenue_won_amount", "units_sold"] },
   ];
@@ -72,7 +73,7 @@ async function getLatestSalesTruth(pool) {
     const sql = `
       select *
       from ${c.table}
-      order by coalesce(created_at, updated_at, now()) desc
+      order by updated_at desc
       limit 1
     `;
     const { rows } = await pool.query(sql);
@@ -83,11 +84,11 @@ async function getLatestSalesTruth(pool) {
     const windowEnd = r.window_end ?? r.window_end_date;
 
     const revenueWon = r.revenue_won_amount ?? r.revenue_won ?? 0;
-    const dealsWon = r.deals_won ?? 0;
+    const dealsWon = r.deals_won ?? r.deals_won_count ?? 0;
     const unitsSold = r.units_sold ?? r.units_won ?? 0;
 
-    const revenueNew = r.revenue_new_prospects ?? r.revenue_from_new_prospects ?? r.revenue_new ?? 0;
-    const revenueOld = r.revenue_old_prospects ?? r.revenue_from_older_prospects ?? r.revenue_old ?? 0;
+    const revenueNew = r.revenue_new_prospects ?? r.revenue_new_prospect ?? r.revenue_from_new_prospects ?? r.revenue_new ?? 0;
+    const revenueOld = r.revenue_old_prospects ?? r.revenue_old_prospect ?? r.revenue_from_older_prospects ?? r.revenue_old ?? 0;
 
     return {
       windowStart,
@@ -273,6 +274,42 @@ function buildPayload({ truth, campaign, consultants }) {
     new_contacts: num(r.new_contacts_90d),
   }));
 
+  // Campaign pipeline performance (data-driven). We use pipeline_created vs contacts created as an "early" signal.
+  // Note: lead_facts_raw currently lacks campaign_id linkage, so stage-level funnel by campaign is not available yet.
+  const pipelinePerfAll = (campaign.rows || []).map(r => {
+    const newContacts = num(r.new_contacts_90d);
+    const pipelineCreated = lcNum(r.lifecycle_counts, "pipeline_created_90d_sales");
+    const dealsCreated = lcNum(r.lifecycle_counts, "deals_created_90d_sales");
+    const dealsWon = lcNum(r.lifecycle_counts, "deals_won_90d_sales");
+    const revenueWon = lcNum(r.lifecycle_counts, "revenue_won_90d_sales");
+
+    const pipelinePerContact = newContacts > 0 ? (pipelineCreated / newContacts) : 0;
+    const dealsWonPerContact = newContacts > 0 ? (dealsWon / newContacts) : 0;
+
+    return {
+      name: r.campaign_name || r.campaign_id,
+      new_contacts: newContacts,
+      pipeline_created: pipelineCreated,
+      deals_created: dealsCreated,
+      deals_won: dealsWon,
+      revenue_won: revenueWon,
+      pipeline_per_contact: pipelinePerContact,
+      deals_won_per_contact: dealsWonPerContact,
+    };
+  });
+
+  // Avoid tiny-sample noise: require at least 20 new contacts in the 90d window
+  const pipelinePerfEligible = pipelinePerfAll.filter(x => x.new_contacts >= 20);
+
+  const topPipelineEfficiency = [...pipelinePerfEligible]
+    .sort((a, b) => b.pipeline_per_contact - a.pipeline_per_contact)
+    .slice(0, 3);
+
+  const bottomPipelineEfficiency = [...pipelinePerfEligible]
+    .sort((a, b) => a.pipeline_per_contact - b.pipeline_per_contact)
+    .slice(0, 3);
+
+
   return {
     truth,
     totals: {
@@ -289,6 +326,8 @@ function buildPayload({ truth, campaign, consultants }) {
     },
     topRevenue,
     topPipeline,
+    topPipelineEfficiency,
+    bottomPipelineEfficiency,
     consultants,
   };
 }
@@ -301,13 +340,9 @@ async function generateGptReport() {
 
   const openai = new OpenAI({ apiKey: need("OPENAI_API_KEY") });
 
-  const [truth, campaign, consultants] = await Promise.all([
-    getLatestSalesTruth(pool),
-    getCampaignSnapshot(pool),
-    getConsultantLeadFunnel(pool),
-  ]);
+  const [truth, campaign, consultants, campaignFunnel] = await Promise.all([ getLatestSalesTruth(pool), getCampaignSnapshot(pool), getConsultantLeadFunnel(pool), getCampaignFunnel90dByUtmCampaign(pool, { minLeads: 30 }) ]);
 
-  const payload = buildPayload({ truth, campaign, consultants });
+  const payload = buildPayload({ truth, campaign, consultants }); payload.campaignFunnel = campaignFunnel;
 
   const system = `
 You write a boardroom-ready weekly report for a UK marketing director.
@@ -327,42 +362,77 @@ Explain attribution coverage clearly:
 If truth totals are missing, say so explicitly and do not invent them.
 `.trim();
 
-  const user = `
-Generate the report in TWO main sections plus executive summary:
+      const user = `
+Generate the report in TWO main sections plus executive summary.
 
-1) Executive Summary (truth totals + attribution coverage)
+CRITICAL ACCURACY RULES:
+- Treat "UNATTRIBUTED" as a tracking bucket (not a campaign). Recommend attribution fixes, not campaign optimisation.
+- For any disqualification reasons list, ALWAYS include counts (e.g., "Not Contactable: 100"), never names-only.
+- Use ONLY numbers present in the Data JSON. Do NOT create, estimate, infer, or “fill in” missing figures.
+- If a number is not present, write "N/A".
+- Keep table values strictly aligned to the Data JSON fields. ALL rates must be shown as percentages (rate * 100, rounded to 2dp, with % sign).
+- Do not invent campaign names; use the names/keys provided.
+
+1) Executive Summary (truth totals + attribution coverage + actions)
 Must include:
-- Total Revenue Won (truth)
-- Total Deals Won (truth)
-- Total Units Sold (truth)
-- New prospect revenue (<=30d) vs older/unknown
-- Attributed vs unattributed revenue and deals
-- Attributed pipeline created (campaign-only)
+- Total Revenue Won (Truth)
+- Total Deals Won (Truth)
+- Total Units Sold (Truth)
+- New Prospect Revenue (<=30d) vs Older/Unknown Revenue
+- Attributed vs Unattributed revenue and deals (Unattributed = Truth minus Attributed)
+- Attributed Pipeline Created (campaign-only)
+
+Then add: Top 3 Actions (next 7 days)
+- EXACTLY 3 actions.
+- Each action must cite the specific signal from the Data JSON (e.g., unattributed gap £X, top/bottom campaign funnel outliers, consultant outlier rates, top disqualification reasons) and a concrete next step.
+- Do not reference any data not in the Data JSON.
 
 2) A) Marketing Performance
+Include:
 - Top campaigns by attributed revenue (table)
 - Top campaigns by attributed pipeline (table)
+
+Add: Campaign Funnel Performance (90d, by utm_campaign via contact linkage)
+Explain briefly: this is an earlier-stage view than revenue, suitable for long sales cycles.
+Show TWO tables (each exactly 5 rows), using ONLY: payload.campaignFunnel.top and payload.campaignFunnel.bottom
+payload.campaignFunnel.top and payload.campaignFunnel.bottom
+
+Tables:
+A) Top 5 campaigns by Zoom Booked rate (earliest strong sales-signal)
+B) Bottom 5 campaigns by Zoom Booked rate
+
+Appendix: All Campaigns (90d) sorted by Zoom Booked %
+- Include EVERY row from payload.campaignFunnel.all (including UNATTRIBUTED).
+- Sort descending by Zoom Booked rate.
+- Use the SAME columns as the funnel tables, including MQL→SQL % and SQL→Zoom %.
+- Show percentages (e.g., 12.3%), never decimals.
+
+
+Each row must include these COUNT columns (no percentages required):
+Campaign (utm_campaign) | Leads Total | Non-MQL (Marketing Prospect) | MQL-Eligible | Disqualified | SQL | Zoom Booked | Deals Won | MQL→SQL % | SQL→Zoom %
+For each campaign row, populate MQL→SQL % from mql_to_sql_rate and SQL→Zoom % from sql_to_zoom_rate, formatted as percentages (e.g., 12.3%).
+
 - Lead quality: top disqualification reasons overall (aggregate from consultant disq reasons)
-- 3–5 concrete actions
+- Concrete Actions: 3–5 actions, grounded ONLY in the Data JSON (no guessing)
 
 3) B) Sales Performance (Consultants Only)
 For each consultant show:
 - Callable leads (exclude Marketing Prospect + Not Applicable)
-- Zoom Booked count + rate
+- Zoom Booked count + rate (format rate as a percentage, e.g. 8.47%)
 - Sales Qualified count
 - Disqualified count + rate
 - Top 3 disqualification reasons
 Then call out:
-- Best/worst outliers on Zoom Booked rate and Disqualification rate
+- Best/worst outliers on Zoom Booked rate and Disqualification rate (ALWAYS show percentages, never decimals)
 - Coaching priorities tied to reasons
 
 Data JSON:
 ${JSON.stringify(payload, null, 2)}
-`.trim();
+  `.trim();
 
   const resp = await openai.chat.completions.create({
     model: process.env.OPENAI_MODEL || "gpt-4o-mini",
-    temperature: 0.2,
+    temperature: 0,
     messages: [
       { role: "system", content: system },
       { role: "user", content: user },
@@ -375,4 +445,20 @@ ${JSON.stringify(payload, null, 2)}
 }
 
 module.exports = { generateGptReport };
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 

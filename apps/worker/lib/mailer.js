@@ -15,16 +15,27 @@ function getTransport() {
   return nodemailer.createTransport({
     host,
     port,
-    secure, // true for 465, false otherwise
+    secure,
     auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
   });
 }
 
-async function sendReportEmail({ to, subject, text }) {
+async function sendReportEmail({ to, subject, text, html }) {
   const transport = getTransport();
-  if (!transport) { console.warn("Email transport not configured; skipping send."); return; }
+  if (!transport) {
+    console.warn("Email transport not configured; skipping send.");
+    return;
+  }
+
   const from = process.env.SMTP_USER;
-  await transport.sendMail({ from, to, subject, text });
+  await transport.sendMail({
+    from,
+    to,
+    subject,
+    text, // plain-text fallback
+    html  // rich HTML version
+  });
+
   console.log("Email sent to", to);
 }
 

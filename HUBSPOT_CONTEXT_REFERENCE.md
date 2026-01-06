@@ -200,3 +200,102 @@ Owner cache is used to map owner IDs → names.
 - Marketing Prospect: `1134678094` (marketing-only)
 - Not Applicable (Additional Director/Member): `1109558437` (exclude)
 
+## 2026-01-06 — Lifecycle Stage definitions (CONTACT.lifecyclestage)
+
+These are CONTACT lifecycle stages (not the Lead pipeline stages).
+
+- Subscriber (Subscriber): marketing subscription only (often missing phone / removed phone)
+- Lead (Lead): expressed initial interest via ads/forms (typically email + phone)
+- Marketing Qualified Lead (marketingqualifiedlead): marketing qualified, ready for sales
+- Sales Qualified Lead (salesqualifiedlead): sales qualified, fits ICP/TAM, strong interest
+- Opportunity (opportunity): associated with a deal (e.g., Zoom consultation scheduled)
+- Customer (customer): signed client agreement; 7-day cooling off waived/expired
+- Not Eligible (other): not a fit; documented disqualification reasons
+- Withdrawn Customer (1050299822): withdrew after entering contract
+- Cancelled Customer (1050058114): cancelled under 7-day clause
+- Not Applicable (Additional Member/Director) (1109670527): lifecycle stage used for additional members/directors (distinct from Lead-stage Not Applicable used in lead pipeline reporting)
+
+## Reporting note: Marketing Prospect vs MQL
+- Marketing Prospect currently refers to Lead pipeline stage id 1134678094 (lead_facts_raw.lead_stage) and is a marketing metric only.
+- MQL is CONTACT.lifecyclestage = marketingqualifiedlead and is a separate concept from Marketing Prospect.
+To report both, we need CONTACT lifecycle stage data available in Postgres (or a reliable ingestion job).
+
+## 2026-01-06 — Campaign funnel definitions (Lead-based cohort, 90d)
+
+### Why Lead-based (not Contact lifecycle)
+- Contact lifecycle stage (contacts.lifecyclestage) is mutable over time and is not currently ingested into Postgres (no contacts.lifecyclestage table/column present).
+- For a stable, auditable weekly rolling 90-day view, we use the cohort of Leads created in the last 90 days (lead_facts_raw.created_at).
+
+### Campaign key for funnel grouping
+- Group by utm_campaign sourced from contact linkage:
+  - contact_email_cache.utm_campaign (by contact_id)
+  - lead_contact_map maps lead_id <-> contact_id
+  - lead_facts_raw contains lead_stage for progression
+- If utm_campaign is empty, bucket as UNATTRIBUTED.
+
+### Funnel measures (all are counts)
+Cohort: leads created in last 90 days.
+
+- Leads Total:
+  - Count of lead_facts_raw rows in window joined through lead_contact_map/contact_email_cache
+
+- Non-MQL (Marketing Prospect):
+  - lead_facts_raw.lead_stage = 1134678094 (Marketing Prospect / Prospect Qualification)
+  - Business meaning: leads generated that are not eligible to pass to sales (e.g., form answers imply unqualified / not wanting a call)
+
+- MQL-Eligible (lead-level eligibility):
+  - MQL-Eligible = Leads Total - Non-MQL - Not Applicable
+  - NOTE: includes leads even if later disqualified (disqualified is reported separately)
+
+- Not Applicable (excluded):
+  - lead_facts_raw.lead_stage = 1109558437 (Additional Director/Member auto-created leads)
+  - Exclude from callable-leads reporting and from MQL-Eligible
+
+- Disqualified (reported separately):
+  - lead_facts_raw.lead_stage = unqualified-stage-id
+  - Report separately; does not remove leads from MQL-Eligible eligibility count
+
+- SQL:
+  - lead_facts_raw.lead_stage = 1213103916 (Sales Qualified / Prospect Qualification)
+  - Note: may be skipped if the lead goes straight to Zoom Booked
+
+- Zoom Booked:
+  - lead_facts_raw.lead_stage = qualified-stage-id (Zoom Booked / Prospect Qualification)
+
+- Deals Won:
+  - Derived from deal_revenue_rollup_90d by utm_campaign (counts of deals_won)
+
+### Ranking used in report
+- Top 3 / Bottom 3 campaigns ranked by Zoom Booked rate (zoom_booked / leads_total) for early sales signal.
+- Tables show counts; rates may be mentioned but should be formatted as percentages.
+
+## Campaign Funnel Reporting – Locked Definitions (2026-01)
+
+### Lead Cohort
+- Cohort = all leads created in the last 90 days.
+- EXCLUDE ENTIRELY:
+  - Lead stage "Not Applicable" (ID: 1109558437).
+  - These are additional members/directors and must never be counted in performance reporting.
+
+### Funnel Classification Rules
+- Leads Total = all eligible leads created in window.
+- Non-MQL = leads that ever entered "Marketing Prospect" stage (ID: 1134678094).
+- MQL-Eligible = Leads Total − Non-MQL.
+- SQL = leads that ever entered:
+  - Sales Qualified stage (ID: 1213103916), OR
+  - Zoom Booked stage (ID: qualified-stage-id).
+- Zoom Booked = leads that ever entered Zoom Booked.
+- Disqualified = leads that ever entered unqualified stage.
+  - Disqualification does NOT exclude leads from MQL or SQL counts.
+
+### Attribution Rules (Campaign Funnel)
+- Campaign attribution is resolved via:
+  1) Campaign on contact
+  2) Most recent form submission UTMs
+  3) Contact UTMs
+  4) Otherwise UNATTRIBUTED
+- UNATTRIBUTED is a tracking bucket, not a campaign.
+
+### Purpose
+- Campaign funnel tables are an EARLY-SIGNAL diagnostic.
+- Revenue performance is reported separately using Sales truth totals.

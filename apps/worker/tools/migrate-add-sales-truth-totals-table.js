@@ -1,7 +1,6 @@
-﻿import "dotenv/config";
-import pg from "pg";
+﻿require("dotenv/config");
+const { Pool } = require("pg");
 
-const { Pool } = pg;
 const DATABASE_URL = process.env.DATABASE_URL || process.env.RENDER_DATABASE_URL;
 if (!DATABASE_URL) { console.error("Missing DATABASE_URL (or RENDER_DATABASE_URL)."); process.exit(1); }
 

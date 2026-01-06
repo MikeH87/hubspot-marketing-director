@@ -1,37 +1,35 @@
-﻿require("dotenv").config({ path: __dirname + "/../.env" });
-
+﻿require("dotenv/config");
 const { Pool } = require("pg");
 const { sendReportEmail } = require("../lib/mailer");
 const { generateGptReport } = require("../lib/gptReport");
+const { marked } = require("marked");
 
-function getMostRecentMonday(d) {
-  const date = new Date(d);
-  const day = date.getDay();
-  const diff = date.getDate() - day + (day === 0 ? -6 : 1);
-  date.setDate(diff);
-  date.setHours(0, 0, 0, 0);
-  return date.toISOString().split("T")[0];
+function mdToEmailHtml(md) {
+  let html = marked.parse(md);
+
+  // Inline styles for email-client compatibility
+  html = html
+    .replace(/<table>/g, '<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%;font-family:Segoe UI,Arial,sans-serif;font-size:13px;">')
+    .replace(/<th>/g, '<th style="background:#f3f3f3;text-align:left;border:1px solid #ddd;padding:6px;">')
+    .replace(/<td>/g, '<td style="border:1px solid #ddd;padding:6px;vertical-align:top;">');
+
+  return '<div style="font-family:Segoe UI,Arial,sans-serif;font-size:14px;line-height:1.45">' + html + "</div>";
 }
 
 (async () => {
-  if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL missing (apps/worker/.env)");
+  const DATABASE_URL = process.env.DATABASE_URL || process.env.RENDER_DATABASE_URL;
+  if (!DATABASE_URL) throw new Error("Missing DATABASE_URL (or RENDER_DATABASE_URL).");
 
   const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: process.env.DATABASE_SSL === "false" ? false : { rejectUnauthorized: false }
+    connectionString: DATABASE_URL,
+    ssl: DATABASE_URL.includes("render.com") ? { rejectUnauthorized: false } : undefined,
   });
 
-  // Ensure reports table exists (same as worker)
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS reports (
-      week_start DATE PRIMARY KEY,
-      summary TEXT
-    );
-  `);
+  const weekStart =
+    process.env.WEEK_START ||
+    new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString().slice(0, 10);
 
-  const weekStart = getMostRecentMonday(new Date());
-
-  let summary = `Placeholder report for week starting ${weekStart}`;
+  let summary = `# Weekly Marketing and Sales Report\n\n(Report generation placeholder)\n`;
   const gpt = await generateGptReport({ pool });
   if (gpt) summary = gpt;
 
@@ -45,10 +43,13 @@ function getMostRecentMonday(d) {
   const to = process.env.EMAIL_TO || process.env.SMTP_USER;
   if (!to) throw new Error("No EMAIL_TO (or SMTP_USER fallback) configured.");
 
+  const html = mdToEmailHtml(summary);
+
   await sendReportEmail({
     to,
     subject: `Weekly marketing report (${weekStart})`,
-    text: summary
+    text: summary,
+    html,
   });
 
   await pool.end();
