@@ -1,0 +1,47 @@
+﻿require("dotenv").config({ path: __dirname + "/.env" });
+
+const { Pool } = require("pg");
+const { sendReportEmail } = require("./lib/mailer");
+const { generateGptReport } = require("./lib/gptReport");
+
+(async () => {
+  const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: process.env.DATABASE_SSL === "false" ? false : { rejectUnauthorized: false }
+  });
+
+  const weekStart = (() => {
+    const d = new Date();
+    const day = d.getDay();
+    const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+    d.setDate(diff);
+    d.setHours(0, 0, 0, 0);
+    return d.toISOString().split("T")[0];
+  })();
+
+  let summary = `Placeholder report for week starting ${weekStart}`;
+
+  const gpt = await generateGptReport({ pool });
+  if (gpt) summary = gpt;
+
+  await pool.query(
+    "INSERT INTO reports (week_start, summary) VALUES ($1, $2) ON CONFLICT (week_start) DO UPDATE SET summary = EXCLUDED.summary;",
+    [weekStart, summary]
+  );
+
+  const to = process.env.EMAIL_TO || process.env.SMTP_USER;
+  if (!to) throw new Error("No EMAIL_TO (or SMTP_USER fallback) set.");
+
+  await sendReportEmail({
+    to,
+    subject: `Weekly marketing report (${weekStart})`,
+    text: summary
+  });
+
+  await pool.end();
+  console.log("DONE (report generated + emailed).");
+  process.exit(0);
+})().catch(e => {
+  console.error("FAILED:", e && e.stack ? e.stack : e);
+  process.exit(1);
+});

@@ -1,0 +1,193 @@
+﻿require("dotenv").config();
+const { Pool } = require("pg");
+
+// IMPORTANT: tools/ is 2 levels below repo root -> apps/worker/tools
+// So to reach /packages we need ../../../packages
+const { hsGet, hsPost } = require("../../../packages/hubspot/client");
+
+function isUuidLike(s) {
+  return typeof s === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s.trim());
+}
+
+function normName(s) {
+  return (s || "").toString().trim().toLowerCase();
+}
+
+async function getAllDealsCreatedInWindow(fromISO, toISO) {
+  // Uses CRM search API to avoid paging the entire portal
+  // createdate is ms timestamp in HubSpot filters
+  const fromMs = Date.parse(fromISO);
+  const toMs = Date.parse(toISO);
+
+  let after = 0;
+  const out = [];
+
+  while (true) {
+    const body = {
+      filterGroups: [{
+        filters: [
+          { propertyName: "createdate", operator: "GTE", value: String(fromMs) },
+          { propertyName: "createdate", operator: "LTE", value: String(toMs) }
+        ]
+      }],
+      sorts: ["createdate"],
+      properties: ["dealname", "dealtype", "dealstage", "pipeline", "amount", "closedate", "createdate"],
+      limit: 200,
+      after: after || undefined
+    };
+
+    const res = await hsPost("/crm/v3/objects/deals/search", body);
+    if (res && res.results) out.push(...res.results);
+
+    const next = res && res.paging && res.paging.next && res.paging.next.after;
+    if (!next) break;
+    after = next;
+  }
+
+  return out;
+}
+
+async function getDealContactIds(dealId) {
+  // Associations v4
+  const res = await hsGet(`/crm/v4/objects/deals/${dealId}/associations/contacts?limit=500`);
+  const ids = (res && res.results || []).map(r => r.toObjectId).filter(Boolean);
+  return Array.from(new Set(ids));
+}
+
+async function getContactCampaignKey(contactId) {
+  // Pull a small set of best-guess campaign fields.
+  // We’ll try them in priority order.
+  const props = [
+    "hs_analytics_last_touch_converting_campaign",
+    "hs_analytics_first_touch_converting_campaign",
+    "engagements_last_meeting_booked_campaign",
+    "utm_campaign",
+    "hs_manual_campaign_ids"
+  ];
+
+  const q = props.map(p => `properties=${encodeURIComponent(p)}`).join("&");
+  const res = await hsGet(`/crm/v3/objects/contacts/${contactId}?${q}`);
+  const p = (res && res.properties) || {};
+
+  // Pick first non-empty
+  for (const k of props) {
+    const v = (p[k] || "").toString().trim();
+    if (v) return { key: k, value: v };
+  }
+
+  return { key: null, value: null };
+}
+
+async function main() {
+  if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL missing in env");
+  if (!process.env.HUBSPOT_PRIVATE_APP_TOKEN) throw new Error("HUBSPOT_PRIVATE_APP_TOKEN missing in env");
+
+  const now = new Date();
+  const endISO = now.toISOString().slice(0, 10);
+  const start = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+  const startISO = start.toISOString().slice(0, 10);
+
+  console.log(`Rolling window: ${startISO} to ${endISO}`);
+
+  const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+
+  // Load snapshot rows
+  const snap = await pool.query(`
+    select id, campaign_id, campaign_name
+    from campaign_context_snapshot_90d
+    order by id
+  `);
+
+  console.log(`Snapshot campaigns loaded: ${snap.rows.length}`);
+
+  const byCampaignId = new Map();
+  const byCampaignName = new Map();
+
+  for (const r of snap.rows) {
+    if (r.campaign_id) byCampaignId.set(String(r.campaign_id).trim(), r.id);
+    if (r.campaign_name) byCampaignName.set(normName(r.campaign_name), r.id);
+  }
+
+  const deals = await getAllDealsCreatedInWindow(`${startISO}T00:00:00.000Z`, `${endISO}T23:59:59.999Z`);
+  console.log(`Deals in window (by createdate): ${deals.length}`);
+
+  // Build rowId -> set(dealIds)
+  const rowDeals = new Map();
+
+  let dealsWithContactAssoc = 0;
+  let dealsWithAttributedCampaign = 0;
+
+  const unmatched = new Map(); // campaignValue -> count
+
+  for (const d of deals) {
+    const dealId = d.id;
+    const contactIds = await getDealContactIds(dealId);
+    if (!contactIds.length) continue;
+    dealsWithContactAssoc++;
+
+    // We’ll use the first associated contact as “primary” for attribution, to match your current approach
+    const primaryContact = contactIds[0];
+
+    const { value: campaignVal } = await getContactCampaignKey(primaryContact);
+    if (!campaignVal) {
+      unmatched.set("(no campaign on contact)", (unmatched.get("(no campaign on contact)") || 0) + 1);
+      continue;
+    }
+
+    let rowId = null;
+
+    // If UUID-like, try campaign_id match first
+    if (isUuidLike(campaignVal)) {
+      rowId = byCampaignId.get(campaignVal.trim()) || null;
+    }
+
+    // Always try campaign_name normalised match too (covers “OFFLINE :: CRM_UI” etc.)
+    if (!rowId) {
+      rowId = byCampaignName.get(normName(campaignVal)) || null;
+    }
+
+    if (!rowId) {
+      unmatched.set(campaignVal, (unmatched.get(campaignVal) || 0) + 1);
+      continue;
+    }
+
+    dealsWithAttributedCampaign++;
+
+    if (!rowDeals.has(rowId)) rowDeals.set(rowId, new Set());
+    rowDeals.get(rowId).add(String(dealId));
+  }
+
+  console.log(`Deals with a contact association: ${dealsWithContactAssoc}`);
+  console.log(`Deals with campaign attribution (matched snapshot row): ${dealsWithAttributedCampaign}`);
+
+  // Write to DB with real rowCount tracking
+  let rowsUpdated = 0;
+  for (const [rowId, setIds] of rowDeals.entries()) {
+    const arr = Array.from(setIds);
+    const res = await pool.query(
+      `update campaign_context_snapshot_90d set deal_ids_90d = $2::jsonb where id = $1`,
+      [rowId, JSON.stringify(arr)]
+    );
+    if (res.rowCount > 0) rowsUpdated += res.rowCount;
+  }
+
+  console.log(`Snapshot rows updated with deal_ids_90d (SQL rowCount): ${rowsUpdated}`);
+
+  if (unmatched.size) {
+    const top = Array.from(unmatched.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 15);
+
+    console.log("\nTop unmatched campaign keys (contact -> count):");
+    for (const [k, v] of top) console.log(`- ${k} -> ${v}`);
+  }
+
+  await pool.end();
+}
+
+main().catch(e => {
+  console.error("FAILED:", e.message);
+  process.exit(1);
+});
+
+

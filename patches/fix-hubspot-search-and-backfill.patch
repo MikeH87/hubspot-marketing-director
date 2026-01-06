@@ -1,0 +1,88 @@
+﻿diff --git a/packages/hubspot/client.js b/packages/hubspot/client.js
+index 2c18e65..a1b2c3d 100644
+--- a/packages/hubspot/client.js
++++ b/packages/hubspot/client.js
+@@ -1,5 +1,6 @@
+ ﻿const BASE = "https://api.hubapi.com";
+ 
+ async function hsGet(path, qs = {}) {
+   const token = process.env.HUBSPOT_PRIVATE_APP_TOKEN;
+   if (!token) throw new Error("HUBSPOT_PRIVATE_APP_TOKEN is not set");
+@@ -14,6 +15,36 @@ async function hsGet(path, qs = {}) {
+   }
+   return res.json();
+ }
+ 
++async function hsPost(path, body = {}, qs = {}) {
++  const token = process.env.HUBSPOT_PRIVATE_APP_TOKEN;
++  if (!token) throw new Error("HUBSPOT_PRIVATE_APP_TOKEN is not set");
++  const url = new URL(BASE + path);
++  for (const [k, v] of Object.entries(qs)) {
++    if (v !== undefined && v !== null && v !== "") url.searchParams.set(k, String(v));
++  }
++  const res = await fetch(url, {
++    method: "POST",
++    headers: {
++      "Authorization": `Bearer ${token}`,
++      "Accept": "application/json",
++      "Content-Type": "application/json",
++    },
++    body: JSON.stringify(body || {}),
++  });
++  if (!res.ok) {
++    const text = await res.text().catch(() => "");
++    throw new Error(`HubSpot POST ${url.pathname} failed: ${res.status} ${res.statusText} ${text}`);
++  }
++  return res.json();
++}
++
+ async function getAllCampaigns(max = 500) {
+   async function page(limit = 100, after) {
+     const json = await hsGet("/marketing/v3/campaigns", { limit, after });
+     const results = Array.isArray(json.results) ? json.results : [];
+@@ -44,4 +75,4 @@ async function getCampaignObject(campaignId) {
+   }
+ }
+ 
+-module.exports = { hsGet, getAllCampaigns, getCampaignObject };
++module.exports = { hsGet, hsPost, getAllCampaigns, getCampaignObject };
+diff --git a/apps/worker/tools/backfill-deal-ids-90d.js b/apps/worker/tools/backfill-deal-ids-90d.js
+index 7c8d9e0..1a2b3c4 100644
+--- a/apps/worker/tools/backfill-deal-ids-90d.js
++++ b/apps/worker/tools/backfill-deal-ids-90d.js
+@@ -1,6 +1,6 @@
+ ﻿require("dotenv").config({ path: __dirname + "/../.env" });
+ const { Pool } = require("pg");
+-const { hsGet } = require("../../../packages/hubspot/client");
++const { hsGet, hsPost } = require("../../../packages/hubspot/client");
+ 
+ const pool = new Pool({
+   connectionString: process.env.DATABASE_URL,
+@@ -26,16 +26,16 @@ async function fetchDealsCreatedInWindow(windowStartISO, windowEndISO) {
+   const url = "/crm/v3/objects/deals/search";
+   let after = 0;
+   while (true) {
+     const body = {
+       filterGroups: [
+         {
+           filters: [
+             { propertyName: "createdate", operator: "GTE", value: String(new Date(windowStartISO).getTime()) },
+             { propertyName: "createdate", operator: "LT", value: String(new Date(windowEndISO).getTime()) },
+           ],
+         },
+       ],
+       sorts: [{ propertyName: "createdate", direction: "ASCENDING" }],
+       properties: ["createdate"],
+       limit: 100,
+       after,
+     };
+-    const resp = await hsGet(url, { method: "POST", body });
++    const resp = await hsPost(url, body);
+     const results = resp.results || [];
+     for (const d of results) out.push(d);
+     const next = resp.paging?.next?.after;
+     if (!next) break;
+     after = next;
+   }
+   return out;
+ }
